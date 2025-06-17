@@ -9,10 +9,10 @@ import (
 )
 
 type Handler struct {
-	storage *repository.MemStorage
+	storage repository.Repository
 }
 
-func New(storage *repository.MemStorage) *Handler {
+func New(storage repository.Repository) *Handler {
 	return &Handler{storage: storage}
 }
 

@@ -15,14 +15,30 @@ func NewMemStorage() *MemStorage {
 	}
 }
 
-func (m *MemStorage) UpdateGauge(name string, value float64) {
+func (m *MemStorage) UpdateGauge(name string, value float64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.gauges[name] = value
+	return nil
 }
 
-func (m *MemStorage) UpdateCounter(name string, value int64) {
+func (m *MemStorage) UpdateCounter(name string, value int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.counters[name] += value
+	return nil
+}
+
+func (m *MemStorage) GetGauge(name string) (float64, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	value, exists := m.gauges[name]
+	return value, exists
+}
+
+func (m *MemStorage) GetCounter(name string) (int64, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	value, exists := m.counters[name]
+	return value, exists
 }
