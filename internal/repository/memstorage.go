@@ -42,3 +42,23 @@ func (m *MemStorage) GetCounter(name string) (int64, bool) {
 	value, exists := m.counters[name]
 	return value, exists
 }
+
+func (m *MemStorage) GetAllGauges() map[string]float64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make(map[string]float64)
+	for k, v := range m.gauges {
+		result[k] = v
+	}
+	return result
+}
+
+func (m *MemStorage) GetAllCounters() map[string]int64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make(map[string]int64)
+	for k, v := range m.counters {
+		result[k] = v
+	}
+	return result
+}

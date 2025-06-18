@@ -5,4 +5,6 @@ type Repository interface {
 	UpdateCounter(name string, value int64) error
 	GetGauge(name string) (float64, bool)
 	GetCounter(name string) (int64, bool)
+	GetAllGauges() map[string]float64
+	GetAllCounters() map[string]int64
 }
