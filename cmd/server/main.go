@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"net/http"
 
@@ -11,6 +12,9 @@ import (
 )
 
 func main() {
+	addr := flag.String("a", "localhost:8080", "server address")
+	flag.Parse()
+
 	storage := repository.NewMemStorage()
 	h := handler.New(storage)
 
@@ -20,5 +24,6 @@ func main() {
 	r.Get("/value/{type}/{name}", h.GetMetric)
 	r.Get("/", h.ListMetrics)
 
-	log.Fatal(http.ListenAndServe(":8080", r))
+	log.Printf("Starting server on %s", *addr)
+	log.Fatal(http.ListenAndServe(*addr, r))
 }

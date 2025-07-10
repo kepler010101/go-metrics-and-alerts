@@ -10,22 +10,26 @@ import (
 )
 
 type Agent struct {
-	serverURL   string
-	pollCount   int64
-	randomValue float64
-	client      *http.Client
+	serverURL      string
+	pollInterval   time.Duration
+	reportInterval time.Duration
+	pollCount      int64
+	randomValue    float64
+	client         *http.Client
 }
 
-func New(serverURL string) *Agent {
+func New(serverURL string, pollInterval, reportInterval time.Duration) *Agent {
 	return &Agent{
-		serverURL: serverURL,
-		client:    &http.Client{},
+		serverURL:      serverURL,
+		pollInterval:   pollInterval,
+		reportInterval: reportInterval,
+		client:         &http.Client{},
 	}
 }
 
 func (a *Agent) Run() error {
-	pollTicker := time.NewTicker(2 * time.Second)
-	reportTicker := time.NewTicker(10 * time.Second)
+	pollTicker := time.NewTicker(a.pollInterval)
+	reportTicker := time.NewTicker(a.reportInterval)
 
 	metrics := make(map[string]interface{})
 
