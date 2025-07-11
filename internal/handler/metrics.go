@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"fmt"
+	"html/template"
 	"net/http"
 	"strconv"
 
@@ -65,7 +65,7 @@ func (h *Handler) GetMetric(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintf(w, "%g", value)
+		w.Write([]byte(strconv.FormatFloat(value, 'g', -1, 64)))
 
 	case "counter":
 		value, exists := h.storage.GetCounter(metricName)
@@ -74,7 +74,7 @@ func (h *Handler) GetMetric(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintf(w, "%d", value)
+		w.Write([]byte(strconv.FormatInt(value, 10)))
 
 	default:
 		http.Error(w, "Bad request", http.StatusBadRequest)
@@ -84,21 +84,28 @@ func (h *Handler) GetMetric(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 
-	html := "<html><body><h1>Metrics</h1>"
+	tmpl := `<html><body><h1>Metrics</h1>
+<h2>Gauges</h2><ul>
+{{range $name, $value := .Gauges}}
+<li>{{$name}}: {{$value}}</li>
+{{end}}
+</ul>
+<h2>Counters</h2><ul>
+{{range $name, $value := .Counters}}
+<li>{{$name}}: {{$value}}</li>
+{{end}}
+</ul>
+</body></html>`
 
-	html += "<h2>Gauges</h2><ul>"
-	for name, value := range h.storage.GetAllGauges() {
-		html += fmt.Sprintf("<li>%s: %g</li>", name, value)
+	t, _ := template.New("metrics").Parse(tmpl)
+
+	data := struct {
+		Gauges   map[string]float64
+		Counters map[string]int64
+	}{
+		Gauges:   h.storage.GetAllGauges(),
+		Counters: h.storage.GetAllCounters(),
 	}
-	html += "</ul>"
 
-	html += "<h2>Counters</h2><ul>"
-	for name, value := range h.storage.GetAllCounters() {
-		html += fmt.Sprintf("<li>%s: %d</li>", name, value)
-	}
-	html += "</ul>"
-
-	html += "</body></html>"
-
-	fmt.Fprint(w, html)
+	t.Execute(w, data)
 }

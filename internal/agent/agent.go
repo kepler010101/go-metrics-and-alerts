@@ -10,30 +10,27 @@ import (
 )
 
 type Agent struct {
-	serverURL      string
-	pollInterval   time.Duration
-	reportInterval time.Duration
-	pollCount      int64
-	randomValue    float64
-	client         *http.Client
+	config      *Config
+	pollCount   int64
+	randomValue float64
+	client      *http.Client
 }
 
-func New(serverURL string, pollInterval, reportInterval time.Duration) *Agent {
+func New(config *Config) *Agent {
 	return &Agent{
-		serverURL:      serverURL,
-		pollInterval:   pollInterval,
-		reportInterval: reportInterval,
-		client:         &http.Client{},
+		config: config,
+		client: &http.Client{},
 	}
 }
 
 func (a *Agent) Run() error {
-	pollTicker := time.NewTicker(a.pollInterval)
-	reportTicker := time.NewTicker(a.reportInterval)
+	pollTicker := time.NewTicker(a.config.PollInterval)
+	reportTicker := time.NewTicker(a.config.ReportInterval)
 
 	metrics := make(map[string]interface{})
 
-	log.Println("Agent started")
+	log.Printf("Agent starting, server: %s, poll: %v, report: %v",
+		a.config.ServerURL, a.config.PollInterval, a.config.ReportInterval)
 
 	for {
 		select {
@@ -90,30 +87,36 @@ func (a *Agent) collectMetrics(metrics map[string]interface{}) {
 func (a *Agent) sendMetrics(metrics map[string]interface{}) {
 	sent := 0
 	for name, value := range metrics {
-		var url string
-		switch v := value.(type) {
-		case float64:
-			url = fmt.Sprintf("%s/update/gauge/%s/%g", a.serverURL, name, v)
-		case int64:
-			url = fmt.Sprintf("%s/update/counter/%s/%d", a.serverURL, name, v)
-		default:
-			continue
+		if a.sendSingleMetric(name, value) {
+			sent++
 		}
-
-		req, err := http.NewRequest("POST", url, nil)
-		if err != nil {
-			log.Printf("Error creating request: %v", err)
-			continue
-		}
-		req.Header.Set("Content-Type", "text/plain")
-
-		resp, err := a.client.Do(req)
-		if err != nil {
-			log.Printf("Error sending metric %s: %v", name, err)
-			continue
-		}
-		resp.Body.Close()
-		sent++
 	}
 	log.Printf("Sent %d metrics", sent)
+}
+
+func (a *Agent) sendSingleMetric(name string, value interface{}) bool {
+	var url string
+	switch v := value.(type) {
+	case float64:
+		url = fmt.Sprintf("%s/update/gauge/%s/%g", a.config.ServerURL, name, v)
+	case int64:
+		url = fmt.Sprintf("%s/update/counter/%s/%d", a.config.ServerURL, name, v)
+	default:
+		return false
+	}
+
+	req, err := http.NewRequest("POST", url, nil)
+	if err != nil {
+		log.Printf("Error creating request: %v", err)
+		return false
+	}
+	req.Header.Set("Content-Type", "text/plain")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		log.Printf("Error sending metric %s: %v", name, err)
+		return false
+	}
+	resp.Body.Close()
+	return true
 }

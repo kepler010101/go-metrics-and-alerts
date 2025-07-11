@@ -34,7 +34,7 @@ func TestUpdateMetric(t *testing.T) {
 		r.ServeHTTP(w, req)
 
 		if w.Code != test.status {
-			t.Errorf("Expected %d, got %d for %s", test.status, w.Code, test.path)
+			t.Fatalf("Expected %d, got %d for %s", test.status, w.Code, test.path)
 		}
 	}
 }
@@ -66,11 +66,11 @@ func TestGetMetric(t *testing.T) {
 		r.ServeHTTP(w, req)
 
 		if w.Code != test.status {
-			t.Errorf("Expected %d, got %d for %s", test.status, w.Code, test.path)
+			t.Fatalf("Expected %d, got %d for %s", test.status, w.Code, test.path)
 		}
 
 		if test.body != "" && !strings.Contains(w.Body.String(), test.body) {
-			t.Errorf("Expected body to contain %s, got %s", test.body, w.Body.String())
+			t.Fatalf("Expected body to contain %s, got %s", test.body, w.Body.String())
 		}
 	}
 }
