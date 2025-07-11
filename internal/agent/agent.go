@@ -11,7 +11,6 @@ import (
 
 type Agent struct {
 	config      *Config
-	pollCount   int64
 	randomValue float64
 	client      *http.Client
 }
@@ -28,6 +27,7 @@ func (a *Agent) Run() error {
 	reportTicker := time.NewTicker(a.config.ReportInterval)
 
 	metrics := make(map[string]interface{})
+	pollsSinceLastReport := int64(0)
 
 	log.Printf("Agent starting, server: %s, poll: %v, report: %v",
 		a.config.ServerURL, a.config.PollInterval, a.config.ReportInterval)
@@ -36,11 +36,14 @@ func (a *Agent) Run() error {
 		select {
 		case <-pollTicker.C:
 			a.collectMetrics(metrics)
-			log.Printf("Collected metrics, PollCount: %d", a.pollCount)
+			pollsSinceLastReport++
+			log.Printf("Collected metrics, polls since last report: %d", pollsSinceLastReport)
 
 		case <-reportTicker.C:
+			metrics["PollCount"] = pollsSinceLastReport
 			log.Printf("Sending %d metrics", len(metrics))
 			a.sendMetrics(metrics)
+			pollsSinceLastReport = 0
 		}
 	}
 }
@@ -76,9 +79,6 @@ func (a *Agent) collectMetrics(metrics map[string]interface{}) {
 	metrics["StackSys"] = float64(m.StackSys)
 	metrics["Sys"] = float64(m.Sys)
 	metrics["TotalAlloc"] = float64(m.TotalAlloc)
-
-	a.pollCount++
-	metrics["PollCount"] = a.pollCount
 
 	a.randomValue = rand.Float64()
 	metrics["RandomValue"] = a.randomValue
