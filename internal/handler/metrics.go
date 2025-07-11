@@ -2,6 +2,7 @@ package handler
 
 import (
 	"html/template"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -35,7 +36,11 @@ func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
-		h.storage.UpdateGauge(metricName, value)
+		if err := h.storage.UpdateGauge(metricName, value); err != nil {
+			log.Printf("Error updating gauge: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 
 	case "counter":
 		value, err := strconv.ParseInt(metricValue, 10, 64)
@@ -43,7 +48,11 @@ func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
-		h.storage.UpdateCounter(metricName, value)
+		if err := h.storage.UpdateCounter(metricName, value); err != nil {
+			log.Printf("Error updating counter: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 
 	default:
 		http.Error(w, "Bad request", http.StatusBadRequest)
@@ -65,7 +74,9 @@ func (h *Handler) GetMetric(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte(strconv.FormatFloat(value, 'g', -1, 64)))
+		if _, err := w.Write([]byte(strconv.FormatFloat(value, 'g', -1, 64))); err != nil {
+			log.Printf("Error writing response: %v", err)
+		}
 
 	case "counter":
 		value, exists := h.storage.GetCounter(metricName)
@@ -74,7 +85,9 @@ func (h *Handler) GetMetric(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte(strconv.FormatInt(value, 10)))
+		if _, err := w.Write([]byte(strconv.FormatInt(value, 10))); err != nil {
+			log.Printf("Error writingg response: %v", err)
+		}
 
 	default:
 		http.Error(w, "Bad request", http.StatusBadRequest)
@@ -97,7 +110,12 @@ func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
 </ul>
 </body></html>`
 
-	t, _ := template.New("metrics").Parse(tmpl)
+	t, err := template.New("metrics").Parse(tmpl)
+	if err != nil {
+		log.Printf("Error parsing template: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 
 	data := struct {
 		Gauges   map[string]float64
@@ -107,5 +125,7 @@ func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
 		Counters: h.storage.GetAllCounters(),
 	}
 
-	t.Execute(w, data)
+	if err := t.Execute(w, data); err != nil {
+		log.Printf("Error executing template: %v", err)
+	}
 }

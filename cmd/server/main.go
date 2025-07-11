@@ -25,5 +25,7 @@ func main() {
 	r.Get("/", h.ListMetrics)
 
 	log.Printf("Starting server on %s", *addr)
-	log.Fatal(http.ListenAndServe(*addr, r))
+	if err := http.ListenAndServe(*addr, r); err != nil {
+		log.Fatal("Server fail:", err)
+	}
 }

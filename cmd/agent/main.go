@@ -10,5 +10,7 @@ func main() {
 	cfg := agent.ParseConfig()
 	a := agent.New(cfg)
 
-	log.Fatal(a.Run())
+	if err := a.Run(); err != nil {
+		log.Fatal("Agent failed:", err)
+	}
 }

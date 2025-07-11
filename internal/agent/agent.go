@@ -87,14 +87,16 @@ func (a *Agent) collectMetrics(metrics map[string]interface{}) {
 func (a *Agent) sendMetrics(metrics map[string]interface{}) {
 	sent := 0
 	for name, value := range metrics {
-		if a.sendSingleMetric(name, value) {
-			sent++
+		if err := a.sendSingleMetric(name, value); err != nil {
+			log.Printf("Err sending metric: %v", err)
+			continue
 		}
+		sent++
 	}
 	log.Printf("Sent %d metrics", sent)
 }
 
-func (a *Agent) sendSingleMetric(name string, value interface{}) bool {
+func (a *Agent) sendSingleMetric(name string, value interface{}) error {
 	var url string
 	switch v := value.(type) {
 	case float64:
@@ -102,21 +104,20 @@ func (a *Agent) sendSingleMetric(name string, value interface{}) bool {
 	case int64:
 		url = fmt.Sprintf("%s/update/counter/%s/%d", a.config.ServerURL, name, v)
 	default:
-		return false
+		return fmt.Errorf("unsupported type for %s", name)
 	}
 
 	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return false
+		return fmt.Errorf("creating request for %s: %w", name, err)
 	}
 	req.Header.Set("Content-Type", "text/plain")
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		log.Printf("Error sending metric %s: %v", name, err)
-		return false
+		return fmt.Errorf("sending metric %s: %w", name, err)
 	}
 	resp.Body.Close()
-	return true
+
+	return nil
 }
