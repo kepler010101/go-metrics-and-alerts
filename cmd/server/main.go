@@ -4,6 +4,7 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"os"
 
 	"go-metrics-and-alerts/internal/handler"
 	"go-metrics-and-alerts/internal/repository"
@@ -15,6 +16,11 @@ func main() {
 	addr := flag.String("a", "localhost:8080", "server address")
 	flag.Parse()
 
+	finalAddr := *addr
+	if envAddr := os.Getenv("ADDRESS"); envAddr != "" {
+		finalAddr = envAddr
+	}
+
 	storage := repository.NewMemStorage()
 	h := handler.New(storage)
 
@@ -24,8 +30,8 @@ func main() {
 	r.Get("/value/{type}/{name}", h.GetMetric)
 	r.Get("/", h.ListMetrics)
 
-	log.Printf("Starting server on %s", *addr)
-	if err := http.ListenAndServe(*addr, r); err != nil {
+	log.Printf("Starting server on %s", finalAddr)
+	if err := http.ListenAndServe(finalAddr, r); err != nil {
 		log.Fatal("Server fail:", err)
 	}
 }
