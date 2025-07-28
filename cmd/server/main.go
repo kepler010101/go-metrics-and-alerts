@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"go-metrics-and-alerts/internal/handler"
+	"go-metrics-and-alerts/internal/middleware"
 	"go-metrics-and-alerts/internal/repository"
 
 	"github.com/go-chi/chi/v5"
@@ -25,6 +26,8 @@ func main() {
 	h := handler.New(storage)
 
 	r := chi.NewRouter()
+
+	r.Use(middleware.WithLogging)
 
 	r.Post("/update/{type}/{name}/{value}", h.UpdateMetric)
 	r.Get("/value/{type}/{name}", h.GetMetric)
