@@ -28,6 +28,8 @@ func main() {
 	r := chi.NewRouter()
 
 	r.Use(middleware.WithLogging)
+	r.Use(middleware.WithGzipDecompress)
+	r.Use(middleware.WithGzip)
 
 	r.Post("/update/{type}/{name}/{value}", h.UpdateMetric)
 	r.Post("/update", h.UpdateMetricJSON)
