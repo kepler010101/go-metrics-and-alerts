@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"encoding/json"
 	"html/template"
 	"log"
 	"net/http"
 	"strconv"
 
+	models "go-metrics-and-alerts/internal/model"
 	"go-metrics-and-alerts/internal/repository"
 
 	"github.com/go-chi/chi/v5"
@@ -128,4 +130,86 @@ func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
 	if err := t.Execute(w, data); err != nil {
 		log.Printf("Error executing template: %v", err)
 	}
+}
+
+func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
+	var metric models.Metrics
+
+	if err := json.NewDecoder(r.Body).Decode(&metric); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	switch metric.MType {
+	case "gauge":
+		if metric.Value == nil {
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+		if err := h.storage.UpdateGauge(metric.ID, *metric.Value); err != nil {
+			log.Printf("Error updating gauge: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+	case "counter":
+		if metric.Delta == nil {
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+		if err := h.storage.UpdateCounter(metric.ID, *metric.Delta); err != nil {
+			log.Printf("Error updating counter: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+	default:
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) GetMetricJSON(w http.ResponseWriter, r *http.Request) {
+	var metric models.Metrics
+
+	if err := json.NewDecoder(r.Body).Decode(&metric); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	switch metric.MType {
+	case "gauge":
+		value, exists := h.storage.GetGauge(metric.ID)
+		if !exists {
+			http.Error(w, "Not found", http.StatusNotFound)
+			return
+		}
+		metric.Value = &value
+
+	case "counter":
+		value, exists := h.storage.GetCounter(metric.ID)
+		if !exists {
+			http.Error(w, "Not found", http.StatusNotFound)
+			return
+		}
+		metric.Delta = &value
+
+	default:
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	resp, err := json.Marshal(metric)
+	if err != nil {
+		log.Printf("Error marshaling response: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write(resp)
 }

@@ -30,7 +30,9 @@ func main() {
 	r.Use(middleware.WithLogging)
 
 	r.Post("/update/{type}/{name}/{value}", h.UpdateMetric)
+	r.Post("/update", h.UpdateMetricJSON)
 	r.Get("/value/{type}/{name}", h.GetMetric)
+	r.Post("/value", h.GetMetricJSON)
 	r.Get("/", h.ListMetrics)
 
 	log.Printf("Starting server on %s", finalAddr)
