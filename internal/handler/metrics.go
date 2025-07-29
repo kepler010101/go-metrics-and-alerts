@@ -169,7 +169,15 @@ func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	resp, err := json.Marshal(metric)
+	if err != nil {
+		log.Printf("Error marshaling response: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
+	w.Write(resp)
 }
 
 func (h *Handler) GetMetricJSON(w http.ResponseWriter, r *http.Request) {
