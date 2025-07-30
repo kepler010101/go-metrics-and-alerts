@@ -13,6 +13,8 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+var SyncSaveFunc func()
+
 type Handler struct {
 	storage repository.Repository
 }
@@ -59,6 +61,10 @@ func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
+	}
+
+	if SyncSaveFunc != nil {
+		SyncSaveFunc()
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -166,6 +172,10 @@ func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
+	}
+
+	if SyncSaveFunc != nil {
+		SyncSaveFunc()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
