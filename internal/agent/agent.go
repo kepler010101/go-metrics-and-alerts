@@ -1,12 +1,17 @@
 package agent
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
 	"runtime"
 	"time"
+
+	models "go-metrics-and-alerts/internal/model"
 )
 
 type Agent struct {
@@ -97,21 +102,42 @@ func (a *Agent) sendMetrics(metrics map[string]interface{}) {
 }
 
 func (a *Agent) sendSingleMetric(name string, value interface{}) error {
-	var url string
+	var metric models.Metrics
+	metric.ID = name
+
 	switch v := value.(type) {
 	case float64:
-		url = fmt.Sprintf("%s/update/gauge/%s/%g", a.config.ServerURL, name, v)
+		metric.MType = "gauge"
+		metric.Value = &v
 	case int64:
-		url = fmt.Sprintf("%s/update/counter/%s/%d", a.config.ServerURL, name, v)
+		metric.MType = "counter"
+		metric.Delta = &v
 	default:
 		return fmt.Errorf("unsupported type for %s", name)
 	}
 
-	req, err := http.NewRequest("POST", url, nil)
+	jsonData, err := json.Marshal(metric)
+	if err != nil {
+		return fmt.Errorf("marshaling metric %s: %w", name, err)
+	}
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write(jsonData); err != nil {
+		return fmt.Errorf("gzip write error for %s: %w", name, err)
+	}
+	if err := gz.Close(); err != nil {
+		return fmt.Errorf("gzip close error for %s: %w", name, err)
+	}
+
+	url := fmt.Sprintf("%s/update", a.config.ServerURL)
+	req, err := http.NewRequest("POST", url, &buf)
 	if err != nil {
 		return fmt.Errorf("creating request for %s: %w", name, err)
 	}
-	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("Accept-Encoding", "gzip")
 
 	resp, err := a.client.Do(req)
 	if err != nil {
