@@ -47,7 +47,7 @@ func (a *Agent) Run() error {
 		case <-reportTicker.C:
 			metrics["PollCount"] = pollsSinceLastReport
 			log.Printf("Sending %d metrics", len(metrics))
-			a.sendMetrics(metrics)
+			a.sendMetricsBatch(metrics)
 			pollsSinceLastReport = 0
 		}
 	}
@@ -87,6 +87,75 @@ func (a *Agent) collectMetrics(metrics map[string]interface{}) {
 
 	a.randomValue = rand.Float64()
 	metrics["RandomValue"] = a.randomValue
+}
+
+func (a *Agent) sendMetricsBatch(metrics map[string]interface{}) {
+	var batch []models.Metrics
+
+	for name, value := range metrics {
+		var metric models.Metrics
+		metric.ID = name
+
+		switch v := value.(type) {
+		case float64:
+			metric.MType = "gauge"
+			metric.Value = &v
+		case int64:
+			metric.MType = "counter"
+			metric.Delta = &v
+		default:
+			log.Printf("Unsupported type for %s", name)
+			continue
+		}
+
+		batch = append(batch, metric)
+	}
+
+	if len(batch) == 0 {
+		return
+	}
+
+	jsonData, err := json.Marshal(batch)
+	if err != nil {
+		log.Printf("Error marshaling batch: %v", err)
+		return
+	}
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write(jsonData); err != nil {
+		log.Printf("Error compressing batch: %v", err)
+		return
+	}
+	if err := gz.Close(); err != nil {
+		log.Printf("Error closing gzip: %v", err)
+		return
+	}
+
+	url := fmt.Sprintf("%s/updates/", a.config.ServerURL)
+	req, err := http.NewRequest("POST", url, &buf)
+	if err != nil {
+		log.Printf("Error creating request: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("Accept-Encoding", "gzip")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		log.Printf("Error sending batch: %v", err)
+		a.sendMetrics(metrics)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Server returned non-200: %d, falling back to single requests", resp.StatusCode)
+		a.sendMetrics(metrics)
+	} else {
+		log.Printf("Successfully sent batch of %d metrics", len(batch))
+	}
 }
 
 func (a *Agent) sendMetrics(metrics map[string]interface{}) {

@@ -1,6 +1,10 @@
 package repository
 
-import "sync"
+import (
+	"sync"
+
+	models "go-metrics-and-alerts/internal/model"
+)
 
 type MemStorage struct {
 	gauges   map[string]float64
@@ -62,4 +66,23 @@ func (m *MemStorage) GetAllCounters() map[string]int64 {
 		result[k] = v
 	}
 	return result
+}
+
+func (m *MemStorage) UpdateBatch(metrics []models.Metrics) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, metric := range metrics {
+		switch metric.MType {
+		case "gauge":
+			if metric.Value != nil {
+				m.gauges[metric.ID] = *metric.Value
+			}
+		case "counter":
+			if metric.Delta != nil {
+				m.counters[metric.ID] += *metric.Delta
+			}
+		}
+	}
+	return nil
 }
