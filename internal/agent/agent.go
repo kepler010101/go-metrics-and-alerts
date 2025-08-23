@@ -47,7 +47,7 @@ func (a *Agent) Run() error {
 		case <-reportTicker.C:
 			metrics["PollCount"] = pollsSinceLastReport
 			log.Printf("Sending %d metrics", len(metrics))
-			a.sendMetricsBatch(metrics)
+			a.sendMetricsBatchWithRetry(metrics)
 			pollsSinceLastReport = 0
 		}
 	}
@@ -89,7 +89,32 @@ func (a *Agent) collectMetrics(metrics map[string]interface{}) {
 	metrics["RandomValue"] = a.randomValue
 }
 
-func (a *Agent) sendMetricsBatch(metrics map[string]interface{}) {
+func (a *Agent) sendMetricsBatchWithRetry(metrics map[string]interface{}) {
+	retryIntervals := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+
+	for attempt := 0; attempt <= len(retryIntervals); attempt++ {
+		if attempt > 0 {
+			delay := retryIntervals[attempt-1]
+			log.Printf("Retrying after %v (attempt %d)", delay, attempt)
+			time.Sleep(delay)
+		}
+
+		err := a.sendMetricsBatch(metrics)
+		if err == nil {
+			return
+		}
+
+		if attempt == len(retryIntervals) {
+			log.Printf("Failed to send batch after all retries, falling back to single requests")
+			a.sendMetricsWithRetry(metrics)
+			return
+		}
+
+		log.Printf("Error sending batch (attempt %d): %v", attempt+1, err)
+	}
+}
+
+func (a *Agent) sendMetricsBatch(metrics map[string]interface{}) error {
 	var batch []models.Metrics
 
 	for name, value := range metrics {
@@ -112,31 +137,27 @@ func (a *Agent) sendMetricsBatch(metrics map[string]interface{}) {
 	}
 
 	if len(batch) == 0 {
-		return
+		return nil
 	}
 
 	jsonData, err := json.Marshal(batch)
 	if err != nil {
-		log.Printf("Error marshaling batch: %v", err)
-		return
+		return fmt.Errorf("error marshaling batch: %w", err)
 	}
 
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	if _, err := gz.Write(jsonData); err != nil {
-		log.Printf("Error compressing batch: %v", err)
-		return
+		return fmt.Errorf("error compressing batch: %w", err)
 	}
 	if err := gz.Close(); err != nil {
-		log.Printf("Error closing gzip: %v", err)
-		return
+		return fmt.Errorf("error closing gzip: %w", err)
 	}
 
 	url := fmt.Sprintf("%s/updates/", a.config.ServerURL)
 	req, err := http.NewRequest("POST", url, &buf)
 	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return
+		return fmt.Errorf("error creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
@@ -144,30 +165,50 @@ func (a *Agent) sendMetricsBatch(metrics map[string]interface{}) {
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		log.Printf("Error sending batch: %v", err)
-		a.sendMetrics(metrics)
-		return
+		return fmt.Errorf("error sending batch: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("Server returned non-200: %d, falling back to single requests", resp.StatusCode)
-		a.sendMetrics(metrics)
-	} else {
-		log.Printf("Successfully sent batch of %d metrics", len(batch))
+		return fmt.Errorf("server returned non-200: %d", resp.StatusCode)
 	}
+
+	log.Printf("Successfully sent batch of %d metrics", len(batch))
+	return nil
 }
 
-func (a *Agent) sendMetrics(metrics map[string]interface{}) {
+func (a *Agent) sendMetricsWithRetry(metrics map[string]interface{}) {
 	sent := 0
 	for name, value := range metrics {
-		if err := a.sendSingleMetric(name, value); err != nil {
-			log.Printf("Err sending metric: %v", err)
+		if err := a.sendSingleMetricWithRetry(name, value); err != nil {
+			log.Printf("Failed to send metric %s after all retries: %v", name, err)
 			continue
 		}
 		sent++
 	}
 	log.Printf("Sent %d metrics", sent)
+}
+
+func (a *Agent) sendSingleMetricWithRetry(name string, value interface{}) error {
+	retryIntervals := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+
+	for attempt := 0; attempt <= len(retryIntervals); attempt++ {
+		if attempt > 0 {
+			delay := retryIntervals[attempt-1]
+			time.Sleep(delay)
+		}
+
+		err := a.sendSingleMetric(name, value)
+		if err == nil {
+			return nil
+		}
+
+		if attempt == len(retryIntervals) {
+			return err
+		}
+	}
+
+	return fmt.Errorf("failed after all retries")
 }
 
 func (a *Agent) sendSingleMetric(name string, value interface{}) error {
