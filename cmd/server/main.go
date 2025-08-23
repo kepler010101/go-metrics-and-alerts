@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"flag"
 	"log"
@@ -15,15 +16,41 @@ import (
 	"go-metrics-and-alerts/internal/repository"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
+	_ "github.com/lib/pq"
 )
 
 var (
 	storage         repository.Repository
 	fileStoragePath string
 	storeInterval   int
+	db              *sql.DB
+	useFileStorage  bool
 )
 
+func runMigrations(db *sql.DB) error {
+	driver, err := postgres.WithInstance(db, &postgres.Config{})
+	if err != nil {
+		return err
+	}
+
+	m, err := migrate.NewWithDatabaseInstance(
+		"file://migrations",
+		"postgres", driver)
+	if err != nil {
+		return err
+	}
+
+	return m.Up()
+}
+
 func saveToFile() error {
+	if !useFileStorage {
+		return nil
+	}
+
 	var metrics []models.Metrics
 
 	gauges := storage.GetAllGauges()
@@ -89,6 +116,7 @@ func main() {
 	storeIntervalFlag := flag.Int("i", 300, "store interval in seconds")
 	fileStoragePathFlag := flag.String("f", "/tmp/metrics-db.json", "file storage path")
 	restore := flag.Bool("r", true, "restore from file")
+	dsn := flag.String("d", "", "database DSN")
 	flag.Parse()
 
 	finalAddr := *addr
@@ -115,21 +143,47 @@ func main() {
 		}
 	}
 
-	storage = repository.NewMemStorage()
-
-	if finalRestore {
-		if err := loadFromFile(); err != nil {
-			log.Printf("Failed to load from file: %v", err)
-		}
+	finalDSN := *dsn
+	if envDSN := os.Getenv("DATABASE_DSN"); envDSN != "" {
+		finalDSN = envDSN
 	}
 
-	defer func() {
-		if err := saveToFile(); err != nil {
-			log.Printf("Failed to save to file: %v", err)
+	if finalDSN != "" {
+		var err error
+		db, err = sql.Open("postgres", finalDSN)
+		if err != nil {
+			log.Fatal("Failed to connect to database:", err)
 		}
-	}()
+		defer db.Close()
 
-	if storeInterval > 0 {
+		if err := runMigrations(db); err != nil && err != migrate.ErrNoChange {
+			log.Printf("Failed to run migrations: %v", err)
+		}
+
+		storage, err = repository.NewPostgresStorage(db)
+		if err != nil {
+			log.Fatal("Failed to create postgres storage:", err)
+		}
+		useFileStorage = false
+	} else if fileStoragePath != "" {
+		storage = repository.NewMemStorage()
+		useFileStorage = true
+		if finalRestore {
+			if err := loadFromFile(); err != nil {
+				log.Printf("Failed to load from file: %v", err)
+			}
+		}
+		defer func() {
+			if err := saveToFile(); err != nil {
+				log.Printf("Failed to save to file: %v", err)
+			}
+		}()
+	} else {
+		storage = repository.NewMemStorage()
+		useFileStorage = false
+	}
+
+	if useFileStorage && storeInterval > 0 {
 		go func() {
 			ticker := time.NewTicker(time.Duration(storeInterval) * time.Second)
 			defer ticker.Stop()
@@ -143,7 +197,7 @@ func main() {
 
 	h := handler.New(storage)
 
-	if storeInterval == 0 {
+	if useFileStorage && storeInterval == 0 {
 		handler.SyncSaveFunc = func() {
 			if err := saveToFile(); err != nil {
 				log.Printf("Failed to sync save: %v", err)
@@ -157,6 +211,18 @@ func main() {
 	r.Use(middleware.WithGzipDecompress)
 	r.Use(middleware.WithGzip)
 
+	r.Get("/ping", func(w http.ResponseWriter, r *http.Request) {
+		if db == nil {
+			http.Error(w, "Database not configured", http.StatusInternalServerError)
+			return
+		}
+		if err := db.Ping(); err != nil {
+			http.Error(w, "Database connection failed", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
 	r.Post("/update/{type}/{name}/{value}", h.UpdateMetric)
 	r.Post("/update", h.UpdateMetricJSON)
 	r.Post("/update/", h.UpdateMetricJSON)
@@ -164,6 +230,7 @@ func main() {
 	r.Post("/value", h.GetMetricJSON)
 	r.Post("/value/", h.GetMetricJSON)
 	r.Get("/", h.ListMetrics)
+	r.Post("/updates/", h.UpdateMetricsBatch)
 
 	log.Printf("Starting server on %s", finalAddr)
 	if err := http.ListenAndServe(finalAddr, r); err != nil {
