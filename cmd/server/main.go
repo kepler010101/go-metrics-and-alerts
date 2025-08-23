@@ -124,7 +124,6 @@ func main() {
 		finalDSN = envDSN
 	}
 
-	// Подключение к БД если задан DSN
 	if finalDSN != "" {
 		var err error
 		db, err = sql.Open("postgres", finalDSN)
@@ -177,7 +176,6 @@ func main() {
 	r.Use(middleware.WithGzipDecompress)
 	r.Use(middleware.WithGzip)
 
-	// Хендлер для проверки соединения с БД
 	r.Get("/ping", func(w http.ResponseWriter, r *http.Request) {
 		if db == nil {
 			http.Error(w, "Database not configured", http.StatusInternalServerError)
