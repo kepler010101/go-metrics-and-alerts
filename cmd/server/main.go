@@ -16,6 +16,9 @@ import (
 	"go-metrics-and-alerts/internal/repository"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/lib/pq"
 )
 
@@ -24,9 +27,30 @@ var (
 	fileStoragePath string
 	storeInterval   int
 	db              *sql.DB
+	useFileStorage  bool
 )
 
+func runMigrations(db *sql.DB) error {
+	driver, err := postgres.WithInstance(db, &postgres.Config{})
+	if err != nil {
+		return err
+	}
+
+	m, err := migrate.NewWithDatabaseInstance(
+		"file://migrations",
+		"postgres", driver)
+	if err != nil {
+		return err
+	}
+
+	return m.Up()
+}
+
 func saveToFile() error {
+	if !useFileStorage {
+		return nil
+	}
+
 	var metrics []models.Metrics
 
 	gauges := storage.GetAllGauges()
@@ -128,27 +152,38 @@ func main() {
 		var err error
 		db, err = sql.Open("postgres", finalDSN)
 		if err != nil {
-			log.Printf("Failed to connect to database: %v", err)
-		} else {
-			defer db.Close()
+			log.Fatal("Failed to connect to database:", err)
 		}
+		defer db.Close()
+
+		if err := runMigrations(db); err != nil && err != migrate.ErrNoChange {
+			log.Printf("Failed to run migrations: %v", err)
+		}
+
+		storage, err = repository.NewPostgresStorage(db)
+		if err != nil {
+			log.Fatal("Failed to create postgres storage:", err)
+		}
+		useFileStorage = false
+	} else if fileStoragePath != "" {
+		storage = repository.NewMemStorage()
+		useFileStorage = true
+		if finalRestore {
+			if err := loadFromFile(); err != nil {
+				log.Printf("Failed to load from file: %v", err)
+			}
+		}
+		defer func() {
+			if err := saveToFile(); err != nil {
+				log.Printf("Failed to save to file: %v", err)
+			}
+		}()
+	} else {
+		storage = repository.NewMemStorage()
+		useFileStorage = false
 	}
 
-	storage = repository.NewMemStorage()
-
-	if finalRestore {
-		if err := loadFromFile(); err != nil {
-			log.Printf("Failed to load from file: %v", err)
-		}
-	}
-
-	defer func() {
-		if err := saveToFile(); err != nil {
-			log.Printf("Failed to save to file: %v", err)
-		}
-	}()
-
-	if storeInterval > 0 {
+	if useFileStorage && storeInterval > 0 {
 		go func() {
 			ticker := time.NewTicker(time.Duration(storeInterval) * time.Second)
 			defer ticker.Stop()
@@ -162,7 +197,7 @@ func main() {
 
 	h := handler.New(storage)
 
-	if storeInterval == 0 {
+	if useFileStorage && storeInterval == 0 {
 		handler.SyncSaveFunc = func() {
 			if err := saveToFile(); err != nil {
 				log.Printf("Failed to sync save: %v", err)
