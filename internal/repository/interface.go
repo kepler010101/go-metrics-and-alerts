@@ -1,5 +1,7 @@
 package repository
 
+import models "go-metrics-and-alerts/internal/model"
+
 type Repository interface {
 	UpdateGauge(name string, value float64) error
 	UpdateCounter(name string, value int64) error
@@ -7,4 +9,5 @@ type Repository interface {
 	GetCounter(name string) (int64, bool)
 	GetAllGauges() map[string]float64
 	GetAllCounters() map[string]int64
+	UpdateBatch(metrics []models.Metrics) error
 }

@@ -2,6 +2,8 @@ package repository
 
 import (
 	"database/sql"
+
+	models "go-metrics-and-alerts/internal/model"
 )
 
 type PostgresStorage struct {
@@ -92,4 +94,51 @@ func (p *PostgresStorage) GetAllCounters() map[string]int64 {
 	}
 
 	return result
+}
+
+func (p *PostgresStorage) UpdateBatch(metrics []models.Metrics) error {
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	gaugeStmt, err := tx.Prepare(`
+		INSERT INTO gauges (id, value) VALUES ($1, $2)
+		ON CONFLICT (id) DO UPDATE SET value = $2
+	`)
+	if err != nil {
+		return err
+	}
+	defer gaugeStmt.Close()
+
+	counterStmt, err := tx.Prepare(`
+		INSERT INTO counters (id, delta) VALUES ($1, $2)
+		ON CONFLICT (id) DO UPDATE SET delta = counters.delta + $2
+	`)
+	if err != nil {
+		return err
+	}
+	defer counterStmt.Close()
+
+	for _, metric := range metrics {
+		switch metric.MType {
+		case "gauge":
+			if metric.Value != nil {
+				_, err = gaugeStmt.Exec(metric.ID, *metric.Value)
+				if err != nil {
+					return err
+				}
+			}
+		case "counter":
+			if metric.Delta != nil {
+				_, err = counterStmt.Exec(metric.ID, *metric.Delta)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	return tx.Commit()
 }

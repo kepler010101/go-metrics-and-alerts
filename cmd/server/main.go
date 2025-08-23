@@ -230,6 +230,7 @@ func main() {
 	r.Post("/value", h.GetMetricJSON)
 	r.Post("/value/", h.GetMetricJSON)
 	r.Get("/", h.ListMetrics)
+	r.Post("/updates/", h.UpdateMetricsBatch)
 
 	log.Printf("Starting server on %s", finalAddr)
 	if err := http.ListenAndServe(finalAddr, r); err != nil {

@@ -231,3 +231,30 @@ func (h *Handler) GetMetricJSON(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write(resp)
 }
+
+func (h *Handler) UpdateMetricsBatch(w http.ResponseWriter, r *http.Request) {
+	var metrics []models.Metrics
+
+	if err := json.NewDecoder(r.Body).Decode(&metrics); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	if len(metrics) == 0 {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.storage.UpdateBatch(metrics); err != nil {
+		log.Printf("Error updating metrics batch: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if SyncSaveFunc != nil {
+		SyncSaveFunc()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+}
