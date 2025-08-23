@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"flag"
 	"log"
@@ -15,12 +16,14 @@ import (
 	"go-metrics-and-alerts/internal/repository"
 
 	"github.com/go-chi/chi/v5"
+	_ "github.com/lib/pq"
 )
 
 var (
 	storage         repository.Repository
 	fileStoragePath string
 	storeInterval   int
+	db              *sql.DB
 )
 
 func saveToFile() error {
@@ -89,6 +92,7 @@ func main() {
 	storeIntervalFlag := flag.Int("i", 300, "store interval in seconds")
 	fileStoragePathFlag := flag.String("f", "/tmp/metrics-db.json", "file storage path")
 	restore := flag.Bool("r", true, "restore from file")
+	dsn := flag.String("d", "", "database DSN")
 	flag.Parse()
 
 	finalAddr := *addr
@@ -112,6 +116,21 @@ func main() {
 	if envRestore := os.Getenv("RESTORE"); envRestore != "" {
 		if val, err := strconv.ParseBool(envRestore); err == nil {
 			finalRestore = val
+		}
+	}
+
+	finalDSN := *dsn
+	if envDSN := os.Getenv("DATABASE_DSN"); envDSN != "" {
+		finalDSN = envDSN
+	}
+
+	if finalDSN != "" {
+		var err error
+		db, err = sql.Open("postgres", finalDSN)
+		if err != nil {
+			log.Printf("Failed to connect to database: %v", err)
+		} else {
+			defer db.Close()
 		}
 	}
 
@@ -156,6 +175,18 @@ func main() {
 	r.Use(middleware.WithLogging)
 	r.Use(middleware.WithGzipDecompress)
 	r.Use(middleware.WithGzip)
+
+	r.Get("/ping", func(w http.ResponseWriter, r *http.Request) {
+		if db == nil {
+			http.Error(w, "Database not configured", http.StatusInternalServerError)
+			return
+		}
+		if err := db.Ping(); err != nil {
+			http.Error(w, "Database connection failed", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
 
 	r.Post("/update/{type}/{name}/{value}", h.UpdateMetric)
 	r.Post("/update", h.UpdateMetricJSON)
