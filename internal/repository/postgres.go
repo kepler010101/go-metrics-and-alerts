@@ -41,9 +41,7 @@ func (p *PostgresStorage) UpdateCounter(name string, value int64) error {
 
 func (p *PostgresStorage) GetGauge(name string) (float64, bool) {
 	var value float64
-	err := p.executeWithRetry(func() error {
-		return p.db.QueryRow("SELECT value FROM gauges WHERE id = $1", name).Scan(&value)
-	})
+	err := p.db.QueryRow("SELECT value FROM gauges WHERE id = $1", name).Scan(&value)
 	if err != nil {
 		return 0, false
 	}
@@ -52,9 +50,7 @@ func (p *PostgresStorage) GetGauge(name string) (float64, bool) {
 
 func (p *PostgresStorage) GetCounter(name string) (int64, bool) {
 	var value int64
-	err := p.executeWithRetry(func() error {
-		return p.db.QueryRow("SELECT delta FROM counters WHERE id = $1", name).Scan(&value)
-	})
+	err := p.db.QueryRow("SELECT delta FROM counters WHERE id = $1", name).Scan(&value)
 	if err != nil {
 		return 0, false
 	}
@@ -63,14 +59,7 @@ func (p *PostgresStorage) GetCounter(name string) (int64, bool) {
 
 func (p *PostgresStorage) GetAllGauges() map[string]float64 {
 	result := make(map[string]float64)
-
-	var rows *sql.Rows
-	err := p.executeWithRetry(func() error {
-		var err error
-		rows, err = p.db.Query("SELECT id, value FROM gauges")
-		return err
-	})
-
+	rows, err := p.db.Query("SELECT id, value FROM gauges")
 	if err != nil {
 		return result
 	}
@@ -84,23 +73,14 @@ func (p *PostgresStorage) GetAllGauges() map[string]float64 {
 		}
 	}
 
-	if rowsErr := rows.Err(); rowsErr != nil {
-		return make(map[string]float64)
-	}
+	_ = rows.Err()
 
 	return result
 }
 
 func (p *PostgresStorage) GetAllCounters() map[string]int64 {
 	result := make(map[string]int64)
-
-	var rows *sql.Rows
-	err := p.executeWithRetry(func() error {
-		var err error
-		rows, err = p.db.Query("SELECT id, delta FROM counters")
-		return err
-	})
-
+	rows, err := p.db.Query("SELECT id, delta FROM counters")
 	if err != nil {
 		return result
 	}
@@ -114,9 +94,7 @@ func (p *PostgresStorage) GetAllCounters() map[string]int64 {
 		}
 	}
 
-	if rowsErr := rows.Err(); rowsErr != nil {
-		return make(map[string]int64)
-	}
+	_ = rows.Err()
 
 	return result
 }
