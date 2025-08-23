@@ -84,9 +84,8 @@ func (p *PostgresStorage) GetAllGauges() map[string]float64 {
 		}
 	}
 
-	err = rows.Err()
-	if err != nil {
-		return result
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return make(map[string]float64)
 	}
 
 	return result
@@ -115,9 +114,8 @@ func (p *PostgresStorage) GetAllCounters() map[string]int64 {
 		}
 	}
 
-	err = rows.Err()
-	if err != nil {
-		return result
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return make(map[string]int64)
 	}
 
 	return result
