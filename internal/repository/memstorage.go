@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"sync"
 
 	models "go-metrics-and-alerts/internal/model"
@@ -20,35 +21,35 @@ func NewMemStorage() *MemStorage {
 	}
 }
 
-func (m *MemStorage) UpdateGauge(name string, value float64) error {
+func (m *MemStorage) UpdateGauge(ctx context.Context, name string, value float64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.gauges[name] = value
 	return nil
 }
 
-func (m *MemStorage) UpdateCounter(name string, value int64) error {
+func (m *MemStorage) UpdateCounter(ctx context.Context, name string, value int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.counters[name] += value
 	return nil
 }
 
-func (m *MemStorage) GetGauge(name string) (float64, bool) {
+func (m *MemStorage) GetGauge(ctx context.Context, name string) (float64, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	value, exists := m.gauges[name]
 	return value, exists
 }
 
-func (m *MemStorage) GetCounter(name string) (int64, bool) {
+func (m *MemStorage) GetCounter(ctx context.Context, name string) (int64, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	value, exists := m.counters[name]
 	return value, exists
 }
 
-func (m *MemStorage) GetAllGauges() map[string]float64 {
+func (m *MemStorage) GetAllGauges(ctx context.Context) map[string]float64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	result := make(map[string]float64)
@@ -58,7 +59,7 @@ func (m *MemStorage) GetAllGauges() map[string]float64 {
 	return result
 }
 
-func (m *MemStorage) GetAllCounters() map[string]int64 {
+func (m *MemStorage) GetAllCounters(ctx context.Context) map[string]int64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	result := make(map[string]int64)
@@ -68,17 +69,17 @@ func (m *MemStorage) GetAllCounters() map[string]int64 {
 	return result
 }
 
-func (m *MemStorage) UpdateBatch(metrics []models.Metrics) error {
+func (m *MemStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	for _, metric := range metrics {
 		switch metric.MType {
-		case "gauge":
+		case models.TypeGauge:
 			if metric.Value != nil {
 				m.gauges[metric.ID] = *metric.Value
 			}
-		case "counter":
+		case models.TypeCounter:
 			if metric.Delta != nil {
 				m.counters[metric.ID] += *metric.Delta
 			}

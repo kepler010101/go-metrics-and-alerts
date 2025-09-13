@@ -123,10 +123,10 @@ func (a *Agent) sendMetricsBatch(metrics map[string]interface{}) error {
 
 		switch v := value.(type) {
 		case float64:
-			metric.MType = "gauge"
+			metric.MType = models.TypeGauge
 			metric.Value = &v
 		case int64:
-			metric.MType = "counter"
+			metric.MType = models.TypeCounter
 			metric.Delta = &v
 		default:
 			log.Printf("Unsupported type for %s", name)
@@ -217,10 +217,10 @@ func (a *Agent) sendSingleMetric(name string, value interface{}) error {
 
 	switch v := value.(type) {
 	case float64:
-		metric.MType = "gauge"
+		metric.MType = models.TypeGauge
 		metric.Value = &v
 	case int64:
-		metric.MType = "counter"
+		metric.MType = models.TypeCounter
 		metric.Delta = &v
 	default:
 		return fmt.Errorf("unsupported type for %s", name)

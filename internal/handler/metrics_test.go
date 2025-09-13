@@ -1,19 +1,22 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"go-metrics-and-alerts/internal/repository"
+	"go-metrics-and-alerts/internal/service"
 
 	"github.com/go-chi/chi/v5"
 )
 
 func TestUpdateMetric(t *testing.T) {
 	storage := repository.NewMemStorage()
-	handler := New(storage)
+	svc := service.NewMetricsService(storage)
+	handler := New(svc)
 
 	r := chi.NewRouter()
 	r.Post("/update/{type}/{name}/{value}", handler.UpdateMetric)
@@ -41,10 +44,12 @@ func TestUpdateMetric(t *testing.T) {
 
 func TestGetMetric(t *testing.T) {
 	storage := repository.NewMemStorage()
-	handler := New(storage)
-
-	storage.UpdateGauge("test", 123.45)
-	storage.UpdateCounter("counter", 100)
+	svc := service.NewMetricsService(storage)
+	handler := New(svc)
+	
+	ctx := context.Background()
+	storage.UpdateGauge(ctx, "test", 123.45)
+	storage.UpdateCounter(ctx, "counter", 100)
 
 	r := chi.NewRouter()
 	r.Get("/value/{type}/{name}", handler.GetMetric)

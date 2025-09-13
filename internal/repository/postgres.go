@@ -1,27 +1,29 @@
 package repository
 
 import (
-	"database/sql"
+	"context"
 	"errors"
 	"time"
 
 	models "go-metrics-and-alerts/internal/model"
 
 	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type PostgresStorage struct {
-	db *sql.DB
+	pool *pgxpool.Pool
 }
 
-func NewPostgresStorage(db *sql.DB) (*PostgresStorage, error) {
-	return &PostgresStorage{db: db}, nil
+func NewPostgresStorage(pool *pgxpool.Pool) (*PostgresStorage, error) {
+	return &PostgresStorage{pool: pool}, nil
 }
 
-func (p *PostgresStorage) UpdateGauge(name string, value float64) error {
-	return p.executeWithRetry(func() error {
-		_, err := p.db.Exec(`
+func (p *PostgresStorage) UpdateGauge(ctx context.Context, name string, value float64) error {
+	return p.executeWithRetry(ctx, func(ctx context.Context) error {
+		_, err := p.pool.Exec(ctx, `
 			INSERT INTO gauges (id, value) VALUES ($1, $2)
 			ON CONFLICT (id) DO UPDATE SET value = $2
 		`, name, value)
@@ -29,9 +31,9 @@ func (p *PostgresStorage) UpdateGauge(name string, value float64) error {
 	})
 }
 
-func (p *PostgresStorage) UpdateCounter(name string, value int64) error {
-	return p.executeWithRetry(func() error {
-		_, err := p.db.Exec(`
+func (p *PostgresStorage) UpdateCounter(ctx context.Context, name string, value int64) error {
+	return p.executeWithRetry(ctx, func(ctx context.Context) error {
+		_, err := p.pool.Exec(ctx, `
 			INSERT INTO counters (id, delta) VALUES ($1, $2)
 			ON CONFLICT (id) DO UPDATE SET delta = counters.delta + $2
 		`, name, value)
@@ -39,27 +41,27 @@ func (p *PostgresStorage) UpdateCounter(name string, value int64) error {
 	})
 }
 
-func (p *PostgresStorage) GetGauge(name string) (float64, bool) {
+func (p *PostgresStorage) GetGauge(ctx context.Context, name string) (float64, bool) {
 	var value float64
-	err := p.db.QueryRow("SELECT value FROM gauges WHERE id = $1", name).Scan(&value)
+	err := p.pool.QueryRow(ctx, "SELECT value FROM gauges WHERE id = $1", name).Scan(&value)
 	if err != nil {
 		return 0, false
 	}
 	return value, true
 }
 
-func (p *PostgresStorage) GetCounter(name string) (int64, bool) {
+func (p *PostgresStorage) GetCounter(ctx context.Context, name string) (int64, bool) {
 	var value int64
-	err := p.db.QueryRow("SELECT delta FROM counters WHERE id = $1", name).Scan(&value)
+	err := p.pool.QueryRow(ctx, "SELECT delta FROM counters WHERE id = $1", name).Scan(&value)
 	if err != nil {
 		return 0, false
 	}
 	return value, true
 }
 
-func (p *PostgresStorage) GetAllGauges() map[string]float64 {
+func (p *PostgresStorage) GetAllGauges(ctx context.Context) map[string]float64 {
 	result := make(map[string]float64)
-	rows, err := p.db.Query("SELECT id, value FROM gauges")
+	rows, err := p.pool.Query(ctx, "SELECT id, value FROM gauges")
 	if err != nil {
 		return result
 	}
@@ -73,14 +75,16 @@ func (p *PostgresStorage) GetAllGauges() map[string]float64 {
 		}
 	}
 
-	_ = rows.Err()
+	if err := rows.Err(); err != nil {
+		return result
+	}
 
 	return result
 }
 
-func (p *PostgresStorage) GetAllCounters() map[string]int64 {
+func (p *PostgresStorage) GetAllCounters(ctx context.Context) map[string]int64 {
 	result := make(map[string]int64)
-	rows, err := p.db.Query("SELECT id, delta FROM counters")
+	rows, err := p.pool.Query(ctx, "SELECT id, delta FROM counters")
 	if err != nil {
 		return result
 	}
@@ -94,49 +98,39 @@ func (p *PostgresStorage) GetAllCounters() map[string]int64 {
 		}
 	}
 
-	_ = rows.Err()
+	if err := rows.Err(); err != nil {
+		return result
+	}
 
 	return result
 }
 
-func (p *PostgresStorage) UpdateBatch(metrics []models.Metrics) error {
-	return p.executeWithRetry(func() error {
-		tx, err := p.db.Begin()
+func (p *PostgresStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
+	return p.executeWithRetry(ctx, func(ctx context.Context) error {
+		tx, err := p.pool.Begin(ctx)
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
-
-		gaugeStmt, err := tx.Prepare(`
-			INSERT INTO gauges (id, value) VALUES ($1, $2)
-			ON CONFLICT (id) DO UPDATE SET value = $2
-		`)
-		if err != nil {
-			return err
-		}
-		defer gaugeStmt.Close()
-
-		counterStmt, err := tx.Prepare(`
-			INSERT INTO counters (id, delta) VALUES ($1, $2)
-			ON CONFLICT (id) DO UPDATE SET delta = counters.delta + $2
-		`)
-		if err != nil {
-			return err
-		}
-		defer counterStmt.Close()
+		defer tx.Rollback(ctx)
 
 		for _, metric := range metrics {
 			switch metric.MType {
-			case "gauge":
+			case models.TypeGauge:
 				if metric.Value != nil {
-					_, err = gaugeStmt.Exec(metric.ID, *metric.Value)
+					_, err = tx.Exec(ctx, `
+						INSERT INTO gauges (id, value) VALUES ($1, $2)
+						ON CONFLICT (id) DO UPDATE SET value = $2
+					`, metric.ID, *metric.Value)
 					if err != nil {
 						return err
 					}
 				}
-			case "counter":
+			case models.TypeCounter:
 				if metric.Delta != nil {
-					_, err = counterStmt.Exec(metric.ID, *metric.Delta)
+					_, err = tx.Exec(ctx, `
+						INSERT INTO counters (id, delta) VALUES ($1, $2)
+						ON CONFLICT (id) DO UPDATE SET delta = counters.delta + $2
+					`, metric.ID, *metric.Delta)
 					if err != nil {
 						return err
 					}
@@ -144,19 +138,23 @@ func (p *PostgresStorage) UpdateBatch(metrics []models.Metrics) error {
 			}
 		}
 
-		return tx.Commit()
+		return tx.Commit(ctx)
 	})
 }
 
-func (p *PostgresStorage) executeWithRetry(fn func() error) error {
+func (p *PostgresStorage) executeWithRetry(ctx context.Context, fn func(context.Context) error) error {
 	retryIntervals := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
 
 	for attempt := 0; attempt <= len(retryIntervals); attempt++ {
 		if attempt > 0 {
-			time.Sleep(retryIntervals[attempt-1])
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(retryIntervals[attempt-1]):
+			}
 		}
 
-		err := fn()
+		err := fn(ctx)
 		if err == nil {
 			return nil
 		}
@@ -176,6 +174,9 @@ func (p *PostgresStorage) executeWithRetry(fn func() error) error {
 func (p *PostgresStorage) isRetriableError(err error) bool {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false
+		}
 		return false
 	}
 

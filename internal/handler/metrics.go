@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"html/template"
 	"log"
@@ -8,7 +9,7 @@ import (
 	"strconv"
 
 	models "go-metrics-and-alerts/internal/model"
-	"go-metrics-and-alerts/internal/repository"
+	"go-metrics-and-alerts/internal/service"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -16,11 +17,11 @@ import (
 var SyncSaveFunc func()
 
 type Handler struct {
-	storage repository.Repository
+	service *service.MetricsService
 }
 
-func New(storage repository.Repository) *Handler {
-	return &Handler{storage: storage}
+func New(svc *service.MetricsService) *Handler {
+	return &Handler{service: svc}
 }
 
 func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
@@ -33,26 +34,28 @@ func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
+
 	switch metricType {
-	case "gauge":
+	case models.TypeGauge:
 		value, err := strconv.ParseFloat(metricValue, 64)
 		if err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
-		if err := h.storage.UpdateGauge(metricName, value); err != nil {
+		if err := h.service.UpdateGauge(ctx, metricName, value); err != nil {
 			log.Printf("Error updating gauge: %v", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 
-	case "counter":
+	case models.TypeCounter:
 		value, err := strconv.ParseInt(metricValue, 10, 64)
 		if err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
-		if err := h.storage.UpdateCounter(metricName, value); err != nil {
+		if err := h.service.UpdateCounter(ctx, metricName, value); err != nil {
 			log.Printf("Error updating counter: %v", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -73,10 +76,11 @@ func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetMetric(w http.ResponseWriter, r *http.Request) {
 	metricType := chi.URLParam(r, "type")
 	metricName := chi.URLParam(r, "name")
+	ctx := r.Context()
 
 	switch metricType {
-	case "gauge":
-		value, exists := h.storage.GetGauge(metricName)
+	case models.TypeGauge:
+		value, exists := h.service.GetGauge(ctx, metricName)
 		if !exists {
 			http.Error(w, "Not found", http.StatusNotFound)
 			return
@@ -86,15 +90,15 @@ func (h *Handler) GetMetric(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Error writing response: %v", err)
 		}
 
-	case "counter":
-		value, exists := h.storage.GetCounter(metricName)
+	case models.TypeCounter:
+		value, exists := h.service.GetCounter(ctx, metricName)
 		if !exists {
 			http.Error(w, "Not found", http.StatusNotFound)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain")
 		if _, err := w.Write([]byte(strconv.FormatInt(value, 10))); err != nil {
-			log.Printf("Error writingg response: %v", err)
+			log.Printf("Error writing response: %v", err)
 		}
 
 	default:
@@ -103,6 +107,7 @@ func (h *Handler) GetMetric(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	w.Header().Set("Content-Type", "text/html")
 
 	tmpl := `<html><body><h1>Metrics</h1>
@@ -129,8 +134,8 @@ func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
 		Gauges   map[string]float64
 		Counters map[string]int64
 	}{
-		Gauges:   h.storage.GetAllGauges(),
-		Counters: h.storage.GetAllCounters(),
+		Gauges:   h.service.GetAllGauges(ctx),
+		Counters: h.service.GetAllCounters(ctx),
 	}
 
 	if err := t.Execute(w, data); err != nil {
@@ -140,37 +145,17 @@ func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
 	var metric models.Metrics
+	ctx := r.Context()
 
 	if err := json.NewDecoder(r.Body).Decode(&metric); err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
 
-	switch metric.MType {
-	case "gauge":
-		if metric.Value == nil {
-			http.Error(w, "Bad request", http.StatusBadRequest)
-			return
-		}
-		if err := h.storage.UpdateGauge(metric.ID, *metric.Value); err != nil {
-			log.Printf("Error updating gauge: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-
-	case "counter":
-		if metric.Delta == nil {
-			http.Error(w, "Bad request", http.StatusBadRequest)
-			return
-		}
-		if err := h.storage.UpdateCounter(metric.ID, *metric.Delta); err != nil {
-			log.Printf("Error updating counter: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-
-	default:
-		http.Error(w, "Bad request", http.StatusBadRequest)
+	result, err := h.service.UpdateMetricJSON(ctx, metric)
+	if err != nil {
+		log.Printf("Error updating metric: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -179,7 +164,7 @@ func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	resp, err := json.Marshal(metric)
+	resp, err := json.Marshal(result)
 	if err != nil {
 		log.Printf("Error marshaling response: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -192,36 +177,27 @@ func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetMetricJSON(w http.ResponseWriter, r *http.Request) {
 	var metric models.Metrics
+	ctx := r.Context()
 
 	if err := json.NewDecoder(r.Body).Decode(&metric); err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
 
-	switch metric.MType {
-	case "gauge":
-		value, exists := h.storage.GetGauge(metric.ID)
-		if !exists {
-			http.Error(w, "Not found", http.StatusNotFound)
-			return
-		}
-		metric.Value = &value
-
-	case "counter":
-		value, exists := h.storage.GetCounter(metric.ID)
-		if !exists {
-			http.Error(w, "Not found", http.StatusNotFound)
-			return
-		}
-		metric.Delta = &value
-
-	default:
-		http.Error(w, "Bad request", http.StatusBadRequest)
+	result, err := h.service.GetMetricJSON(ctx, metric)
+	if err != nil {
+		log.Printf("Error getting metric: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	
+	if result == nil {
+		http.Error(w, "Not found", http.StatusNotFound)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	resp, err := json.Marshal(metric)
+	resp, err := json.Marshal(result)
 	if err != nil {
 		log.Printf("Error marshaling response: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -234,6 +210,7 @@ func (h *Handler) GetMetricJSON(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) UpdateMetricsBatch(w http.ResponseWriter, r *http.Request) {
 	var metrics []models.Metrics
+	ctx := r.Context()
 
 	if err := json.NewDecoder(r.Body).Decode(&metrics); err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
@@ -245,7 +222,7 @@ func (h *Handler) UpdateMetricsBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.storage.UpdateBatch(metrics); err != nil {
+	if err := h.service.UpdateBatch(ctx, metrics); err != nil {
 		log.Printf("Error updating metrics batch: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return

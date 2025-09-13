@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"flag"
@@ -14,11 +15,13 @@ import (
 	"go-metrics-and-alerts/internal/middleware"
 	models "go-metrics-and-alerts/internal/model"
 	"go-metrics-and-alerts/internal/repository"
+	"go-metrics-and-alerts/internal/service"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/lib/pq"
 )
 
@@ -26,7 +29,7 @@ var (
 	storage         repository.Repository
 	fileStoragePath string
 	storeInterval   int
-	db              *sql.DB
+	pool            *pgxpool.Pool
 	useFileStorage  bool
 )
 
@@ -51,23 +54,24 @@ func saveToFile() error {
 		return nil
 	}
 
+	ctx := context.Background()
 	var metrics []models.Metrics
 
-	gauges := storage.GetAllGauges()
+	gauges := storage.GetAllGauges(ctx)
 	for name, value := range gauges {
 		metric := models.Metrics{
 			ID:    name,
-			MType: "gauge",
+			MType: models.TypeGauge,
 			Value: &value,
 		}
 		metrics = append(metrics, metric)
 	}
 
-	counters := storage.GetAllCounters()
+	counters := storage.GetAllCounters(ctx)
 	for name, delta := range counters {
 		metric := models.Metrics{
 			ID:    name,
-			MType: "counter",
+			MType: models.TypeCounter,
 			Delta: &delta,
 		}
 		metrics = append(metrics, metric)
@@ -95,15 +99,16 @@ func loadFromFile() error {
 		return err
 	}
 
+	ctx := context.Background()
 	for _, metric := range metrics {
 		switch metric.MType {
-		case "gauge":
+		case models.TypeGauge:
 			if metric.Value != nil {
-				storage.UpdateGauge(metric.ID, *metric.Value)
+				storage.UpdateGauge(ctx, metric.ID, *metric.Value)
 			}
-		case "counter":
+		case models.TypeCounter:
 			if metric.Delta != nil {
-				storage.UpdateCounter(metric.ID, *metric.Delta)
+				storage.UpdateCounter(ctx, metric.ID, *metric.Delta)
 			}
 		}
 	}
@@ -150,17 +155,28 @@ func main() {
 
 	if finalDSN != "" {
 		var err error
-		db, err = sql.Open("postgres", finalDSN)
+		
+		pool, err = pgxpool.New(context.Background(), finalDSN)
+		if err != nil {
+			log.Fatal("Failed to create connection pool:", err)
+		}
+		defer pool.Close()
+		
+		if err := pool.Ping(context.Background()); err != nil {
+			log.Fatal("Failed to ping database:", err)
+		}
+		
+		db, err := sql.Open("postgres", finalDSN)
 		if err != nil {
 			log.Fatal("Failed to connect to database:", err)
 		}
 		defer db.Close()
-
+		
 		if err := runMigrations(db); err != nil && err != migrate.ErrNoChange {
 			log.Printf("Failed to run migrations: %v", err)
 		}
 
-		storage, err = repository.NewPostgresStorage(db)
+		storage, err = repository.NewPostgresStorage(pool)
 		if err != nil {
 			log.Fatal("Failed to create postgres storage:", err)
 		}
@@ -195,7 +211,8 @@ func main() {
 		}()
 	}
 
-	h := handler.New(storage)
+	svc := service.NewMetricsService(storage)
+	h := handler.New(svc)
 
 	if useFileStorage && storeInterval == 0 {
 		handler.SyncSaveFunc = func() {
@@ -212,11 +229,11 @@ func main() {
 	r.Use(middleware.WithGzip)
 
 	r.Get("/ping", func(w http.ResponseWriter, r *http.Request) {
-		if db == nil {
+		if pool == nil {
 			http.Error(w, "Database not configured", http.StatusInternalServerError)
 			return
 		}
-		if err := db.Ping(); err != nil {
+		if err := pool.Ping(r.Context()); err != nil {
 			http.Error(w, "Database connection failed", http.StatusInternalServerError)
 			return
 		}
@@ -234,6 +251,6 @@ func main() {
 
 	log.Printf("Starting server on %s", finalAddr)
 	if err := http.ListenAndServe(finalAddr, r); err != nil {
-		log.Fatal("Server fail:", err)
+		log.Fatal("Server failed:", err)
 	}
 }
