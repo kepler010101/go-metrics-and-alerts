@@ -8,16 +8,18 @@ import (
 )
 
 type Config struct {
-	ServerURL      string
-	PollInterval   time.Duration
-	ReportInterval time.Duration
+    ServerURL      string
+    PollInterval   time.Duration
+    ReportInterval time.Duration
+    Key            string
 }
 
 func ParseConfig() *Config {
-	addr := flag.String("a", "localhost:8080", "server address")
-	reportInterval := flag.Int("r", 10, "report interval in seconds")
-	pollInterval := flag.Int("p", 2, "poll interval in seconds")
-	flag.Parse()
+    addr := flag.String("a", "localhost:8080", "server address")
+    reportInterval := flag.Int("r", 10, "report interval in seconds")
+    pollInterval := flag.Int("p", 2, "poll interval in seconds")
+    keyFlag := flag.String("k", "", "hash key")
+    flag.Parse()
 	
 	finalAddr := *addr
 	if envAddr := os.Getenv("ADDRESS"); envAddr != "" {
@@ -31,16 +33,22 @@ func ParseConfig() *Config {
 		}
 	}
 
-	finalPollInterval := *pollInterval
-	if envPoll := os.Getenv("POLL_INTERVAL"); envPoll != "" {
-		if val, err := strconv.Atoi(envPoll); err == nil {
-			finalPollInterval = val
-		}
-	}
+    finalPollInterval := *pollInterval
+    if envPoll := os.Getenv("POLL_INTERVAL"); envPoll != "" {
+        if val, err := strconv.Atoi(envPoll); err == nil {
+            finalPollInterval = val
+        }
+    }
 
-	return &Config{
-		ServerURL:      "http://" + finalAddr,
-		PollInterval:   time.Duration(finalPollInterval) * time.Second,
-		ReportInterval: time.Duration(finalReportInterval) * time.Second,
-	}
+    finalKey := *keyFlag
+    if envKey := os.Getenv("KEY"); envKey != "" {
+        finalKey = envKey
+    }
+
+    return &Config{
+        ServerURL:      "http://" + finalAddr,
+        PollInterval:   time.Duration(finalPollInterval) * time.Second,
+        ReportInterval: time.Duration(finalReportInterval) * time.Second,
+        Key:            finalKey,
+    }
 }

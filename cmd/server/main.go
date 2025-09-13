@@ -1,14 +1,14 @@
 package main
 
 import (
-	"database/sql"
-	"encoding/json"
-	"flag"
-	"log"
-	"net/http"
-	"os"
-	"strconv"
-	"time"
+    "database/sql"
+    "encoding/json"
+    "flag"
+    "log"
+    "net/http"
+    "os"
+    "strconv"
+    "time"
 
 	"go-metrics-and-alerts/internal/handler"
 	"go-metrics-and-alerts/internal/middleware"
@@ -112,12 +112,13 @@ func loadFromFile() error {
 }
 
 func main() {
-	addr := flag.String("a", "localhost:8080", "server address")
-	storeIntervalFlag := flag.Int("i", 300, "store interval in seconds")
-	fileStoragePathFlag := flag.String("f", "/tmp/metrics-db.json", "file storage path")
-	restore := flag.Bool("r", true, "restore from file")
-	dsn := flag.String("d", "", "database DSN")
-	flag.Parse()
+    addr := flag.String("a", "localhost:8080", "server address")
+    storeIntervalFlag := flag.Int("i", 300, "store interval in seconds")
+    fileStoragePathFlag := flag.String("f", "/tmp/metrics-db.json", "file storage path")
+    restore := flag.Bool("r", true, "restore from file")
+    dsn := flag.String("d", "", "database DSN")
+    keyFlag := flag.String("k", "", "hash key")
+    flag.Parse()
 
 	finalAddr := *addr
 	if envAddr := os.Getenv("ADDRESS"); envAddr != "" {
@@ -143,10 +144,15 @@ func main() {
 		}
 	}
 
-	finalDSN := *dsn
-	if envDSN := os.Getenv("DATABASE_DSN"); envDSN != "" {
-		finalDSN = envDSN
-	}
+    finalDSN := *dsn
+    if envDSN := os.Getenv("DATABASE_DSN"); envDSN != "" {
+        finalDSN = envDSN
+    }
+
+    finalKey := *keyFlag
+    if envKey := os.Getenv("KEY"); envKey != "" {
+        finalKey = envKey
+    }
 
 	if finalDSN != "" {
 		var err error
@@ -195,7 +201,9 @@ func main() {
 		}()
 	}
 
-	h := handler.New(storage)
+    h := handler.New(storage)
+
+    handler.SecretKey = finalKey
 
 	if useFileStorage && storeInterval == 0 {
 		handler.SyncSaveFunc = func() {
