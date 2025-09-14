@@ -1,17 +1,20 @@
 package agent
 
 import (
-	"bytes"
-	"compress/gzip"
-	"encoding/json"
-	"fmt"
-	"log"
-	"math/rand"
-	"net/http"
-	"runtime"
-	"time"
+    "bytes"
+    "compress/gzip"
+    "crypto/hmac"
+    "crypto/sha256"
+    "encoding/hex"
+    "encoding/json"
+    "fmt"
+    "log"
+    "math/rand"
+    "net/http"
+    "runtime"
+    "time"
 
-	models "go-metrics-and-alerts/internal/model"
+    models "go-metrics-and-alerts/internal/model"
 )
 
 type Agent struct {
@@ -21,10 +24,10 @@ type Agent struct {
 }
 
 func New(config *Config) *Agent {
-	return &Agent{
-		config: config,
-		client: &http.Client{},
-	}
+    return &Agent{
+        config: config,
+        client: &http.Client{},
+    }
 }
 
 func (a *Agent) Run() error {
@@ -115,7 +118,7 @@ func (a *Agent) sendMetricsBatchWithRetry(metrics map[string]interface{}) {
 }
 
 func (a *Agent) sendMetricsBatch(metrics map[string]interface{}) error {
-	var batch []models.Metrics
+    var batch []models.Metrics
 
 	for name, value := range metrics {
 		var metric models.Metrics
@@ -140,10 +143,17 @@ func (a *Agent) sendMetricsBatch(metrics map[string]interface{}) error {
 		return nil
 	}
 
-	jsonData, err := json.Marshal(batch)
-	if err != nil {
-		return fmt.Errorf("error marshaling batch: %w", err)
-	}
+    jsonData, err := json.Marshal(batch)
+    if err != nil {
+        return fmt.Errorf("error marshaling batch: %w", err)
+    }
+
+    var hashHeader string
+    if a.config.Key != "" {
+        h := hmac.New(sha256.New, []byte(a.config.Key))
+        h.Write(jsonData)
+        hashHeader = hex.EncodeToString(h.Sum(nil))
+    }
 
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -155,13 +165,16 @@ func (a *Agent) sendMetricsBatch(metrics map[string]interface{}) error {
 	}
 
 	url := fmt.Sprintf("%s/updates/", a.config.ServerURL)
-	req, err := http.NewRequest("POST", url, &buf)
-	if err != nil {
-		return fmt.Errorf("error creating request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Content-Encoding", "gzip")
-	req.Header.Set("Accept-Encoding", "gzip")
+    req, err := http.NewRequest("POST", url, &buf)
+    if err != nil {
+        return fmt.Errorf("error creating request: %w", err)
+    }
+    req.Header.Set("Content-Type", "application/json")
+    req.Header.Set("Content-Encoding", "gzip")
+    req.Header.Set("Accept-Encoding", "gzip")
+    if hashHeader != "" {
+        req.Header.Set("HashSHA256", hashHeader)
+    }
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -212,8 +225,8 @@ func (a *Agent) sendSingleMetricWithRetry(name string, value interface{}) error 
 }
 
 func (a *Agent) sendSingleMetric(name string, value interface{}) error {
-	var metric models.Metrics
-	metric.ID = name
+    var metric models.Metrics
+    metric.ID = name
 
 	switch v := value.(type) {
 	case float64:
@@ -226,10 +239,17 @@ func (a *Agent) sendSingleMetric(name string, value interface{}) error {
 		return fmt.Errorf("unsupported type for %s", name)
 	}
 
-	jsonData, err := json.Marshal(metric)
-	if err != nil {
-		return fmt.Errorf("marshaling metric %s: %w", name, err)
-	}
+    jsonData, err := json.Marshal(metric)
+    if err != nil {
+        return fmt.Errorf("marshaling metric %s: %w", name, err)
+    }
+
+    var hashHeader string
+    if a.config.Key != "" {
+        h := hmac.New(sha256.New, []byte(a.config.Key))
+        h.Write(jsonData)
+        hashHeader = hex.EncodeToString(h.Sum(nil))
+    }
 
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -241,13 +261,16 @@ func (a *Agent) sendSingleMetric(name string, value interface{}) error {
 	}
 
 	url := fmt.Sprintf("%s/update", a.config.ServerURL)
-	req, err := http.NewRequest("POST", url, &buf)
-	if err != nil {
-		return fmt.Errorf("creating request for %s: %w", name, err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Content-Encoding", "gzip")
-	req.Header.Set("Accept-Encoding", "gzip")
+    req, err := http.NewRequest("POST", url, &buf)
+    if err != nil {
+        return fmt.Errorf("creating request for %s: %w", name, err)
+    }
+    req.Header.Set("Content-Type", "application/json")
+    req.Header.Set("Content-Encoding", "gzip")
+    req.Header.Set("Accept-Encoding", "gzip")
+    if hashHeader != "" {
+        req.Header.Set("HashSHA256", hashHeader)
+    }
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -255,5 +278,5 @@ func (a *Agent) sendSingleMetric(name string, value interface{}) error {
 	}
 	resp.Body.Close()
 
-	return nil
+    return nil
 }
