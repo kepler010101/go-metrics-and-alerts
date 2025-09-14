@@ -150,17 +150,6 @@ func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    if SecretKey != "" {
-        hmacHash := hmac.New(sha256.New, []byte(SecretKey))
-        hmacHash.Write(body)
-        expected := hex.EncodeToString(hmacHash.Sum(nil))
-        got := r.Header.Get("HashSHA256")
-        if got == "" || got != expected {
-            http.Error(w, "Bad request", http.StatusBadRequest)
-            return
-        }
-    }
-
     var metric models.Metrics
     if err := json.Unmarshal(body, &metric); err != nil {
         http.Error(w, "Bad request", http.StatusBadRequest)
