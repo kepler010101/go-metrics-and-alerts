@@ -1,19 +1,24 @@
 package handler
 
 import (
-	"encoding/json"
-	"html/template"
-	"log"
-	"net/http"
-	"strconv"
+    "crypto/hmac"
+    "crypto/sha256"
+    "encoding/hex"
+    "encoding/json"
+    "html/template"
+    "io"
+    "log"
+    "net/http"
+    "strconv"
 
-	models "go-metrics-and-alerts/internal/model"
-	"go-metrics-and-alerts/internal/repository"
+    models "go-metrics-and-alerts/internal/model"
+    "go-metrics-and-alerts/internal/repository"
 
-	"github.com/go-chi/chi/v5"
+    "github.com/go-chi/chi/v5"
 )
 
 var SyncSaveFunc func()
+var SecretKey string
 
 type Handler struct {
 	storage repository.Repository
@@ -139,12 +144,28 @@ func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
-	var metric models.Metrics
+    body, err := io.ReadAll(r.Body)
+    if err != nil {
+        http.Error(w, "Bad request", http.StatusBadRequest)
+        return
+    }
 
-	if err := json.NewDecoder(r.Body).Decode(&metric); err != nil {
-		http.Error(w, "Bad request", http.StatusBadRequest)
-		return
-	}
+    if SecretKey != "" {
+        hmacHash := hmac.New(sha256.New, []byte(SecretKey))
+        hmacHash.Write(body)
+        expected := hex.EncodeToString(hmacHash.Sum(nil))
+        got := r.Header.Get("HashSHA256")
+        if got == "" || got != expected {
+            http.Error(w, "Bad request", http.StatusBadRequest)
+            return
+        }
+    }
+
+    var metric models.Metrics
+    if err := json.Unmarshal(body, &metric); err != nil {
+        http.Error(w, "Bad request", http.StatusBadRequest)
+        return
+    }
 
 	switch metric.MType {
 	case "gauge":
@@ -178,25 +199,47 @@ func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
 		SyncSaveFunc()
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	resp, err := json.Marshal(metric)
-	if err != nil {
-		log.Printf("Error marshaling response: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+    w.Header().Set("Content-Type", "application/json")
+    resp, err := json.Marshal(metric)
+    if err != nil {
+        log.Printf("Error marshaling response: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 
-	w.WriteHeader(http.StatusOK)
-	w.Write(resp)
+    if SecretKey != "" {
+        hmacResp := hmac.New(sha256.New, []byte(SecretKey))
+        hmacResp.Write(resp)
+        w.Header().Set("HashSHA256", hex.EncodeToString(hmacResp.Sum(nil)))
+    }
+
+    w.WriteHeader(http.StatusOK)
+    w.Write(resp)
 }
 
 func (h *Handler) GetMetricJSON(w http.ResponseWriter, r *http.Request) {
-	var metric models.Metrics
+    body, err := io.ReadAll(r.Body)
+    if err != nil {
+        http.Error(w, "Bad request", http.StatusBadRequest)
+        return
+    }
 
-	if err := json.NewDecoder(r.Body).Decode(&metric); err != nil {
-		http.Error(w, "Bad request", http.StatusBadRequest)
-		return
-	}
+    if SecretKey != "" {
+        hmacHash := hmac.New(sha256.New, []byte(SecretKey))
+        hmacHash.Write(body)
+        expected := hex.EncodeToString(hmacHash.Sum(nil))
+        got := r.Header.Get("HashSHA256")
+        if got == "" || got != expected {
+            http.Error(w, "Bad request", http.StatusBadRequest)
+            return
+        }
+    }
+
+    var metric models.Metrics
+    if err := json.Unmarshal(body, &metric); err != nil {
+        http.Error(w, "Bad request", http.StatusBadRequest)
+        return
+    }
 
 	switch metric.MType {
 	case "gauge":
@@ -220,25 +263,47 @@ func (h *Handler) GetMetricJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	resp, err := json.Marshal(metric)
-	if err != nil {
-		log.Printf("Error marshaling response: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+    w.Header().Set("Content-Type", "application/json")
+    resp, err := json.Marshal(metric)
+    if err != nil {
+        log.Printf("Error marshaling response: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 
-	w.WriteHeader(http.StatusOK)
-	w.Write(resp)
+    if SecretKey != "" {
+        hmacResp := hmac.New(sha256.New, []byte(SecretKey))
+        hmacResp.Write(resp)
+        w.Header().Set("HashSHA256", hex.EncodeToString(hmacResp.Sum(nil)))
+    }
+
+    w.WriteHeader(http.StatusOK)
+    w.Write(resp)
 }
 
 func (h *Handler) UpdateMetricsBatch(w http.ResponseWriter, r *http.Request) {
-	var metrics []models.Metrics
+    body, err := io.ReadAll(r.Body)
+    if err != nil {
+        http.Error(w, "Bad request", http.StatusBadRequest)
+        return
+    }
 
-	if err := json.NewDecoder(r.Body).Decode(&metrics); err != nil {
-		http.Error(w, "Bad request", http.StatusBadRequest)
-		return
-	}
+    if SecretKey != "" {
+        hmacHash := hmac.New(sha256.New, []byte(SecretKey))
+        hmacHash.Write(body)
+        expected := hex.EncodeToString(hmacHash.Sum(nil))
+        got := r.Header.Get("HashSHA256")
+        if got == "" || got != expected {
+            http.Error(w, "Bad request", http.StatusBadRequest)
+            return
+        }
+    }
+
+    var metrics []models.Metrics
+    if err := json.Unmarshal(body, &metrics); err != nil {
+        http.Error(w, "Bad request", http.StatusBadRequest)
+        return
+    }
 
 	if len(metrics) == 0 {
 		http.Error(w, "Bad request", http.StatusBadRequest)
@@ -255,6 +320,10 @@ func (h *Handler) UpdateMetricsBatch(w http.ResponseWriter, r *http.Request) {
 		SyncSaveFunc()
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+    w.Header().Set("Content-Type", "application/json")
+    if SecretKey != "" {
+        hmacResp := hmac.New(sha256.New, []byte(SecretKey))
+        w.Header().Set("HashSHA256", hex.EncodeToString(hmacResp.Sum(nil)))
+    }
+    w.WriteHeader(http.StatusOK)
 }
