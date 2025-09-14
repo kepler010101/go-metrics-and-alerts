@@ -12,6 +12,7 @@ type Config struct {
     PollInterval   time.Duration
     ReportInterval time.Duration
     Key            string
+    RateLimit      int
 }
 
 func ParseConfig() *Config {
@@ -19,6 +20,7 @@ func ParseConfig() *Config {
     reportInterval := flag.Int("r", 10, "report interval in seconds")
     pollInterval := flag.Int("p", 2, "poll interval in seconds")
     keyFlag := flag.String("k", "", "hash key")
+    limitFlag := flag.Int("l", 1, "rate limit")
     flag.Parse()
 	
 	finalAddr := *addr
@@ -45,10 +47,18 @@ func ParseConfig() *Config {
         finalKey = envKey
     }
 
+    finalLimit := *limitFlag
+    if envLimit := os.Getenv("RATE_LIMIT"); envLimit != "" {
+        if val, err := strconv.Atoi(envLimit); err == nil {
+            finalLimit = val
+        }
+    }
+
     return &Config{
         ServerURL:      "http://" + finalAddr,
         PollInterval:   time.Duration(finalPollInterval) * time.Second,
         ReportInterval: time.Duration(finalReportInterval) * time.Second,
         Key:            finalKey,
+        RateLimit:      finalLimit,
     }
 }
