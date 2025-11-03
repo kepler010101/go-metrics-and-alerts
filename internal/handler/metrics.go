@@ -23,6 +23,19 @@ import (
 var SyncSaveFunc func()
 var SecretKey string
 
+var metricsTemplate = template.Must(template.New("metrics").Parse(`<html><body><h1>Metrics</h1>
+<h2>Gauges</h2><ul>
+{{range $name, $value := .Gauges}}
+<li>{{$name}}: {{$value}}</li>
+{{end}}
+</ul>
+<h2>Counters</h2><ul>
+{{range $name, $value := .Counters}}
+<li>{{$name}}: {{$value}}</li>
+{{end}}
+</ul>
+</body></html>`))
+
 type Handler struct {
 	storage repository.Repository
 	auditor audit.Notifier
@@ -120,26 +133,6 @@ func (h *Handler) GetMetric(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 
-	tmpl := `<html><body><h1>Metrics</h1>
-<h2>Gauges</h2><ul>
-{{range $name, $value := .Gauges}}
-<li>{{$name}}: {{$value}}</li>
-{{end}}
-</ul>
-<h2>Counters</h2><ul>
-{{range $name, $value := .Counters}}
-<li>{{$name}}: {{$value}}</li>
-{{end}}
-</ul>
-</body></html>`
-
-	t, err := template.New("metrics").Parse(tmpl)
-	if err != nil {
-		log.Printf("Error parsing template: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
 	data := struct {
 		Gauges   map[string]float64
 		Counters map[string]int64
@@ -148,7 +141,7 @@ func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
 		Counters: h.storage.GetAllCounters(),
 	}
 
-	if err := t.Execute(w, data); err != nil {
+	if err := metricsTemplate.Execute(w, data); err != nil {
 		log.Printf("Error executing template: %v", err)
 	}
 }
