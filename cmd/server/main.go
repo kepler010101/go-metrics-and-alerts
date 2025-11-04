@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"go-metrics-and-alerts/internal/audit"
@@ -156,11 +155,6 @@ func main() {
 	finalKey := *keyFlag
 	if envKey := os.Getenv("KEY"); envKey != "" {
 		finalKey = envKey
-	}
-	if finalKey != "" {
-		if data, err := os.ReadFile(finalKey); err == nil {
-			finalKey = strings.TrimSpace(string(data))
-		}
 	}
 
 	finalAuditFile := *auditFileFlag
