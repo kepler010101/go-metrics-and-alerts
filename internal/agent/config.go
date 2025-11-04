@@ -1,3 +1,4 @@
+// Package agent contains the background process gathering metrics.
 package agent
 
 import (
@@ -7,6 +8,7 @@ import (
 	"time"
 )
 
+// Config stores runtime parameters for the agent.
 type Config struct {
 	ServerURL      string
 	PollInterval   time.Duration
@@ -15,6 +17,7 @@ type Config struct {
 	RateLimit      int
 }
 
+// ParseConfig builds Config from flags and environment variables.
 func ParseConfig() *Config {
 	addr := flag.String("a", "localhost:8080", "server address")
 	reportInterval := flag.Int("r", 10, "report interval in seconds")

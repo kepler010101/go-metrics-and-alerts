@@ -6,12 +6,14 @@ import (
 	models "go-metrics-and-alerts/internal/model"
 )
 
+// MemStorage keeps metrics in memory using simple maps.
 type MemStorage struct {
 	gauges   map[string]float64
 	counters map[string]int64
 	mu       *sync.Mutex
 }
 
+// NewMemStorage creates an empty in-memory storage.
 func NewMemStorage() *MemStorage {
 	return &MemStorage{
 		gauges:   make(map[string]float64),
@@ -20,6 +22,7 @@ func NewMemStorage() *MemStorage {
 	}
 }
 
+// UpdateGauge sets the gauge value.
 func (m *MemStorage) UpdateGauge(name string, value float64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -27,6 +30,7 @@ func (m *MemStorage) UpdateGauge(name string, value float64) error {
 	return nil
 }
 
+// UpdateCounter adds the delta to the counter value.
 func (m *MemStorage) UpdateCounter(name string, value int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -34,6 +38,7 @@ func (m *MemStorage) UpdateCounter(name string, value int64) error {
 	return nil
 }
 
+// GetGauge returns the gauge value and flag indicating presence.
 func (m *MemStorage) GetGauge(name string) (float64, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -41,6 +46,7 @@ func (m *MemStorage) GetGauge(name string) (float64, bool) {
 	return value, exists
 }
 
+// GetCounter returns the counter value and flag indicating presence.
 func (m *MemStorage) GetCounter(name string) (int64, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -48,6 +54,7 @@ func (m *MemStorage) GetCounter(name string) (int64, bool) {
 	return value, exists
 }
 
+// GetAllGauges returns a copy of all gauge values.
 func (m *MemStorage) GetAllGauges() map[string]float64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -58,6 +65,7 @@ func (m *MemStorage) GetAllGauges() map[string]float64 {
 	return result
 }
 
+// GetAllCounters returns a copy of all counter values.
 func (m *MemStorage) GetAllCounters() map[string]int64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -68,6 +76,7 @@ func (m *MemStorage) GetAllCounters() map[string]int64 {
 	return result
 }
 
+// UpdateBatch applies all metrics updates in order.
 func (m *MemStorage) UpdateBatch(metrics []models.Metrics) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

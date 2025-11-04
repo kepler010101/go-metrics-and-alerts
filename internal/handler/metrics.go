@@ -1,3 +1,4 @@
+// Package handler contains HTTP handlers for the metrics server.
 package handler
 
 import (
@@ -20,7 +21,10 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// SyncSaveFunc triggers a synchronous persistence when assigned.
 var SyncSaveFunc func()
+
+// SecretKey is the optional HMAC secret shared with the agent.
 var SecretKey string
 
 var metricsTemplate = template.Must(template.New("metrics").Parse(`<html><body><h1>Metrics</h1>
@@ -36,19 +40,23 @@ var metricsTemplate = template.Must(template.New("metrics").Parse(`<html><body><
 </ul>
 </body></html>`))
 
+// Handler processes HTTP requests that read or update metrics.
 type Handler struct {
 	storage repository.Repository
 	auditor audit.Notifier
 }
 
+// New creates a handler backed by the provided repository.
 func New(storage repository.Repository) *Handler {
 	return &Handler{storage: storage}
 }
 
+// SetAuditor attaches an audit publisher that will receive events.
 func (h *Handler) SetAuditor(a audit.Notifier) {
 	h.auditor = a
 }
 
+// UpdateMetric handles path based updates like /update/{type}/{name}/{value}.
 func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
 	metricType := chi.URLParam(r, "type")
 	metricName := chi.URLParam(r, "name")
@@ -98,6 +106,7 @@ func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// GetMetric returns a metric value using the /value/{type}/{name} endpoint.
 func (h *Handler) GetMetric(w http.ResponseWriter, r *http.Request) {
 	metricType := chi.URLParam(r, "type")
 	metricName := chi.URLParam(r, "name")
@@ -130,6 +139,7 @@ func (h *Handler) GetMetric(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ListMetrics renders all saved metrics as a simple HTML page.
 func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 
@@ -146,6 +156,7 @@ func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// UpdateMetricJSON handles JSON payloads for single metric updates.
 func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -222,6 +233,7 @@ func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
 	w.Write(resp)
 }
 
+// GetMetricJSON returns a metric using a JSON request body.
 func (h *Handler) GetMetricJSON(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -286,6 +298,7 @@ func (h *Handler) GetMetricJSON(w http.ResponseWriter, r *http.Request) {
 	w.Write(resp)
 }
 
+// UpdateMetricsBatch stores multiple metrics delivered in a single JSON array.
 func (h *Handler) UpdateMetricsBatch(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {

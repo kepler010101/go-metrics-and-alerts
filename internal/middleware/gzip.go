@@ -1,3 +1,4 @@
+// Package middleware contains HTTP middleware helpers used by the server.
 package middleware
 
 import (
@@ -43,6 +44,7 @@ func (w *gzipWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// WithGzip compresses JSON and HTML responses if the client accepts gzip.
 func WithGzip(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
@@ -65,6 +67,7 @@ func WithGzip(next http.Handler) http.Handler {
 	})
 }
 
+// WithGzipDecompress inflates gzip encoded request bodies.
 func WithGzipDecompress(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Content-Encoding") == "gzip" {

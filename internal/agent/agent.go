@@ -21,6 +21,7 @@ import (
 	models "go-metrics-and-alerts/internal/model"
 )
 
+// Agent collects runtime and system metrics and delivers them to the server.
 type Agent struct {
 	config      *Config
 	randomValue float64
@@ -30,6 +31,7 @@ type Agent struct {
 	pollCount   int64
 }
 
+// New builds an Agent with the provided configuration.
 func New(config *Config) *Agent {
 	return &Agent{
 		config:  config,
@@ -38,6 +40,7 @@ func New(config *Config) *Agent {
 	}
 }
 
+// Run launches metric collection and reporting loops.
 func (a *Agent) Run() error {
 	pollTicker := time.NewTicker(a.config.PollInterval)
 	reportTicker := time.NewTicker(a.config.ReportInterval)

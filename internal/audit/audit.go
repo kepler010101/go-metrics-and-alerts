@@ -1,3 +1,4 @@
+// Package audit provides a tiny observer used to record metric events.
 package audit
 
 import (
@@ -9,28 +10,34 @@ import (
 	"time"
 )
 
+// Event describes one audit record produced after a metrics request.
 type Event struct {
 	Timestamp int64    `json:"ts"`
 	Metrics   []string `json:"metrics"`
 	IPAddress string   `json:"ip_address"`
 }
 
+// Listener receives audit events.
 type Listener interface {
 	Handle(Event)
 }
 
+// Notifier broadcasts audit events to registered listeners.
 type Notifier interface {
 	Publish(Event)
 }
 
+// Publisher stores listeners and publishes events to them.
 type Publisher struct {
 	listeners []Listener
 }
 
+// NewPublisher creates a Publisher with an empty listener list.
 func NewPublisher() *Publisher {
 	return &Publisher{}
 }
 
+// Register adds a new listener into the broadcast list.
 func (p *Publisher) Register(listener Listener) {
 	if listener == nil {
 		return
@@ -38,24 +45,29 @@ func (p *Publisher) Register(listener Listener) {
 	p.listeners = append(p.listeners, listener)
 }
 
+// HasListeners reports whether the publisher has at least one subscriber.
 func (p *Publisher) HasListeners() bool {
 	return len(p.listeners) > 0
 }
 
+// Publish sends the event to every registered listener.
 func (p *Publisher) Publish(event Event) {
 	for _, listener := range p.listeners {
 		listener.Handle(event)
 	}
 }
 
+// FileListener appends events to the provided file path.
 type FileListener struct {
 	path string
 }
 
+// NewFileListener creates a file based listener that writes JSON lines.
 func NewFileListener(path string) *FileListener {
 	return &FileListener{path: path}
 }
 
+// Handle saves the event into the configured file.
 func (l *FileListener) Handle(event Event) {
 	if l == nil || l.path == "" {
 		return
@@ -84,6 +96,7 @@ type HTTPListener struct {
 	client *http.Client
 }
 
+// NewHTTPListener creates a listener that POSTs events to the given URL.
 func NewHTTPListener(url string) *HTTPListener {
 	client := &http.Client{Timeout: 5 * time.Second}
 	return &HTTPListener{
@@ -92,6 +105,7 @@ func NewHTTPListener(url string) *HTTPListener {
 	}
 }
 
+// Handle sends the event as JSON to the remote endpoint.
 func (l *HTTPListener) Handle(event Event) {
 	if l == nil || l.url == "" || l.client == nil {
 		return
