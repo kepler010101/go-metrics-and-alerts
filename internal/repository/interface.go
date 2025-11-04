@@ -1,7 +1,9 @@
+// Package repository provides storage implementations for metrics.
 package repository
 
 import models "go-metrics-and-alerts/internal/model"
 
+// Repository describes storage operations supported by the server.
 type Repository interface {
 	UpdateGauge(name string, value float64) error
 	UpdateCounter(name string, value int64) error

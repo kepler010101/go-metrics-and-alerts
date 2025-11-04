@@ -11,14 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// PostgresStorage stores metrics inside PostgreSQL tables.
 type PostgresStorage struct {
 	db *sql.DB
 }
 
+// NewPostgresStorage wraps the provided database handle.
 func NewPostgresStorage(db *sql.DB) (*PostgresStorage, error) {
 	return &PostgresStorage{db: db}, nil
 }
 
+// UpdateGauge upserts the gauge value in the database.
 func (p *PostgresStorage) UpdateGauge(name string, value float64) error {
 	return p.executeWithRetry(func() error {
 		_, err := p.db.Exec(`
@@ -29,6 +32,7 @@ func (p *PostgresStorage) UpdateGauge(name string, value float64) error {
 	})
 }
 
+// UpdateCounter increments the counter value in the database.
 func (p *PostgresStorage) UpdateCounter(name string, value int64) error {
 	return p.executeWithRetry(func() error {
 		_, err := p.db.Exec(`
@@ -39,6 +43,7 @@ func (p *PostgresStorage) UpdateCounter(name string, value int64) error {
 	})
 }
 
+// GetGauge fetches a gauge value by name.
 func (p *PostgresStorage) GetGauge(name string) (float64, bool) {
 	var value float64
 	err := p.db.QueryRow("SELECT value FROM gauges WHERE id = $1", name).Scan(&value)
@@ -48,6 +53,7 @@ func (p *PostgresStorage) GetGauge(name string) (float64, bool) {
 	return value, true
 }
 
+// GetCounter fetches a counter value by name.
 func (p *PostgresStorage) GetCounter(name string) (int64, bool) {
 	var value int64
 	err := p.db.QueryRow("SELECT delta FROM counters WHERE id = $1", name).Scan(&value)
@@ -57,6 +63,7 @@ func (p *PostgresStorage) GetCounter(name string) (int64, bool) {
 	return value, true
 }
 
+// GetAllGauges returns every gauge stored in the database.
 func (p *PostgresStorage) GetAllGauges() map[string]float64 {
 	result := make(map[string]float64)
 	rows, err := p.db.Query("SELECT id, value FROM gauges")
@@ -78,6 +85,7 @@ func (p *PostgresStorage) GetAllGauges() map[string]float64 {
 	return result
 }
 
+// GetAllCounters returns every counter stored in the database.
 func (p *PostgresStorage) GetAllCounters() map[string]int64 {
 	result := make(map[string]int64)
 	rows, err := p.db.Query("SELECT id, delta FROM counters")
@@ -99,6 +107,7 @@ func (p *PostgresStorage) GetAllCounters() map[string]int64 {
 	return result
 }
 
+// UpdateBatch applies all updates inside a single transaction.
 func (p *PostgresStorage) UpdateBatch(metrics []models.Metrics) error {
 	return p.executeWithRetry(func() error {
 		tx, err := p.db.Begin()

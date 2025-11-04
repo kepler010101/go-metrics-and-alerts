@@ -1,15 +1,16 @@
 package main
 
 import (
-    "database/sql"
-    "encoding/json"
-    "flag"
-    "log"
-    "net/http"
-    "os"
-    "strconv"
-    "time"
+	"database/sql"
+	"encoding/json"
+	"flag"
+	"log"
+	"net/http"
+	"os"
+	"strconv"
+	"time"
 
+	"go-metrics-and-alerts/internal/audit"
 	"go-metrics-and-alerts/internal/handler"
 	"go-metrics-and-alerts/internal/middleware"
 	models "go-metrics-and-alerts/internal/model"
@@ -112,13 +113,15 @@ func loadFromFile() error {
 }
 
 func main() {
-    addr := flag.String("a", "localhost:8080", "server address")
-    storeIntervalFlag := flag.Int("i", 300, "store interval in seconds")
-    fileStoragePathFlag := flag.String("f", "/tmp/metrics-db.json", "file storage path")
-    restore := flag.Bool("r", true, "restore from file")
-    dsn := flag.String("d", "", "database DSN")
-    keyFlag := flag.String("k", "", "hash key")
-    flag.Parse()
+	addr := flag.String("a", "localhost:8080", "server address")
+	storeIntervalFlag := flag.Int("i", 300, "store interval in seconds")
+	fileStoragePathFlag := flag.String("f", "/tmp/metrics-db.json", "file storage path")
+	restore := flag.Bool("r", true, "restore from file")
+	dsn := flag.String("d", "", "database DSN")
+	keyFlag := flag.String("k", "", "hash key")
+	auditFileFlag := flag.String("audit-file", "", "audit file path")
+	auditURLFlag := flag.String("audit-url", "", "audit url")
+	flag.Parse()
 
 	finalAddr := *addr
 	if envAddr := os.Getenv("ADDRESS"); envAddr != "" {
@@ -144,15 +147,25 @@ func main() {
 		}
 	}
 
-    finalDSN := *dsn
-    if envDSN := os.Getenv("DATABASE_DSN"); envDSN != "" {
-        finalDSN = envDSN
-    }
+	finalDSN := *dsn
+	if envDSN := os.Getenv("DATABASE_DSN"); envDSN != "" {
+		finalDSN = envDSN
+	}
 
-    finalKey := *keyFlag
-    if envKey := os.Getenv("KEY"); envKey != "" {
-        finalKey = envKey
-    }
+	finalKey := *keyFlag
+	if envKey := os.Getenv("KEY"); envKey != "" {
+		finalKey = envKey
+	}
+
+	finalAuditFile := *auditFileFlag
+	if envAuditFile := os.Getenv("AUDIT_FILE"); envAuditFile != "" {
+		finalAuditFile = envAuditFile
+	}
+
+	finalAuditURL := *auditURLFlag
+	if envAuditURL := os.Getenv("AUDIT_URL"); envAuditURL != "" {
+		finalAuditURL = envAuditURL
+	}
 
 	if finalDSN != "" {
 		var err error
@@ -201,9 +214,25 @@ func main() {
 		}()
 	}
 
-    h := handler.New(storage)
+	h := handler.New(storage)
 
-    handler.SecretKey = finalKey
+	var auditor audit.Notifier
+	publisher := audit.NewPublisher()
+	if finalAuditFile != "" {
+		publisher.Register(audit.NewFileListener(finalAuditFile))
+	}
+	if finalAuditURL != "" {
+		publisher.Register(audit.NewHTTPListener(finalAuditURL))
+	}
+	if publisher.HasListeners() {
+		auditor = publisher
+	}
+
+	if auditor != nil {
+		h.SetAuditor(auditor)
+	}
+
+	handler.SecretKey = finalKey
 
 	if useFileStorage && storeInterval == 0 {
 		handler.SyncSaveFunc = func() {
