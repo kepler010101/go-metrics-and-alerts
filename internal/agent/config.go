@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -48,6 +49,11 @@ func ParseConfig() *Config {
 	finalKey := *keyFlag
 	if envKey := os.Getenv("KEY"); envKey != "" {
 		finalKey = envKey
+	}
+	if finalKey != "" {
+		if data, err := os.ReadFile(finalKey); err == nil {
+			finalKey = strings.TrimSpace(string(data))
+		}
 	}
 
 	finalLimit := *limitFlag
