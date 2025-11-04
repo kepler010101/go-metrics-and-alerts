@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"go-metrics-and-alerts/internal/audit"
@@ -165,11 +166,8 @@ func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if SecretKey != "" {
-		hmacHash := hmac.New(sha256.New, []byte(SecretKey))
-		hmacHash.Write(body)
-		expected := hex.EncodeToString(hmacHash.Sum(nil))
-		got := r.Header.Get("HashSHA256")
-		if got == "" || got != expected {
+		got := strings.TrimSpace(r.Header.Get("HashSHA256"))
+		if !validateHash(body, got) {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
@@ -242,11 +240,8 @@ func (h *Handler) GetMetricJSON(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if SecretKey != "" {
-		hmacHash := hmac.New(sha256.New, []byte(SecretKey))
-		hmacHash.Write(body)
-		expected := hex.EncodeToString(hmacHash.Sum(nil))
-		got := r.Header.Get("HashSHA256")
-		if got == "" || got != expected {
+		got := strings.TrimSpace(r.Header.Get("HashSHA256"))
+		if !validateHash(body, got) {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
@@ -307,11 +302,8 @@ func (h *Handler) UpdateMetricsBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if SecretKey != "" {
-		hmacHash := hmac.New(sha256.New, []byte(SecretKey))
-		hmacHash.Write(body)
-		expected := hex.EncodeToString(hmacHash.Sum(nil))
-		got := r.Header.Get("HashSHA256")
-		if got == "" || got != expected {
+		got := strings.TrimSpace(r.Header.Get("HashSHA256"))
+		if !validateHash(body, got) {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
@@ -371,4 +363,20 @@ func (h *Handler) publishAudit(r *http.Request, names []string) {
 		IPAddress: ip,
 	}
 	h.auditor.Publish(event)
+}
+
+func validateHash(body []byte, header string) bool {
+	if header == "" {
+		return false
+	}
+
+	data, err := hex.DecodeString(header)
+	if err != nil {
+		return false
+	}
+
+	mac := hmac.New(sha256.New, []byte(SecretKey))
+	mac.Write(body)
+
+	return hmac.Equal(mac.Sum(nil), data)
 }
