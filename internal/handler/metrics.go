@@ -166,7 +166,8 @@ func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if SecretKey != "" {
-		if !validateHash(body, getHashHeader(r)) {
+		header := getHashHeader(r)
+		if header != "" && !validateHash(body, header) {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
@@ -239,7 +240,8 @@ func (h *Handler) GetMetricJSON(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if SecretKey != "" {
-		if !validateHash(body, getHashHeader(r)) {
+		header := getHashHeader(r)
+		if header != "" && !validateHash(body, header) {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
@@ -300,7 +302,8 @@ func (h *Handler) UpdateMetricsBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if SecretKey != "" {
-		if !validateHash(body, getHashHeader(r)) {
+		header := getHashHeader(r)
+		if header != "" && !validateHash(body, header) {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
@@ -383,7 +386,14 @@ func getHashHeader(r *http.Request) string {
 		return ""
 	}
 	if h := strings.TrimSpace(r.Header.Get("HashSHA256")); h != "" {
+		if strings.EqualFold(h, "none") {
+			return ""
+		}
 		return h
 	}
-	return strings.TrimSpace(r.Header.Get("Hash"))
+	h := strings.TrimSpace(r.Header.Get("Hash"))
+	if strings.EqualFold(h, "none") {
+		return ""
+	}
+	return h
 }
