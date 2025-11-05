@@ -30,6 +30,10 @@ var (
 	storeInterval   int
 	db              *sql.DB
 	useFileStorage  bool
+
+	buildVersion string
+	buildDate    string
+	buildCommit  string
 )
 
 func runMigrations(db *sql.DB) error {
@@ -123,6 +127,10 @@ func main() {
 	auditFileFlag := flag.String("audit-file", "", "audit file path")
 	auditURLFlag := flag.String("audit-url", "", "audit url")
 	flag.Parse()
+
+	log.Printf("Build version: %s", fallback(buildVersion))
+	log.Printf("Build date: %s", fallback(buildDate))
+	log.Printf("Build commit: %s", fallback(buildCommit))
 
 	finalAddr := *addr
 	if envAddr := os.Getenv("ADDRESS"); envAddr != "" {
@@ -279,4 +287,11 @@ func main() {
 	if err := http.ListenAndServe(finalAddr, r); err != nil {
 		log.Fatal("Server fail:", err)
 	}
+}
+
+func fallback(value string) string {
+	if value == "" {
+		return "N/A"
+	}
+	return value
 }
