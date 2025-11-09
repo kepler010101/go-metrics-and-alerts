@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rsa"
 	"crypto/x509"
 	"database/sql"
@@ -11,8 +12,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"go-metrics-and-alerts/internal/audit"
@@ -342,9 +345,34 @@ func main() {
 	r.Get("/", h.ListMetrics)
 	r.Post("/updates/", h.UpdateMetricsBatch)
 
-	log.Printf("Starting server on %s", finalAddr)
-	if err := http.ListenAndServe(finalAddr, r); err != nil {
-		log.Fatal("Server fail:", err)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
+	defer stop()
+
+	srv := &http.Server{
+		Addr:    finalAddr,
+		Handler: r,
+	}
+
+	go func() {
+		log.Printf("Starting server on %s", finalAddr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server fail: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Println("Shutdown signal received")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Server shutdown error: %v", err)
+	}
+
+	if useFileStorage {
+		if err := saveToFile(); err != nil {
+			log.Printf("Failed to save during shutdown: %v", err)
+		}
 	}
 }
 

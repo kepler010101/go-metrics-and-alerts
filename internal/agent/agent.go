@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
@@ -57,54 +58,93 @@ func New(config *Config) *Agent {
 }
 
 // Run launches metric collection and reporting loops.
-func (a *Agent) Run() error {
+func (a *Agent) Run(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	pollTicker := time.NewTicker(a.config.PollInterval)
 	reportTicker := time.NewTicker(a.config.ReportInterval)
+	defer pollTicker.Stop()
+	defer reportTicker.Stop()
 
 	log.Printf("Agent starting, server: %s, poll: %v, report: %v",
 		a.config.ServerURL, a.config.PollInterval, a.config.ReportInterval)
 
+	var wg sync.WaitGroup
+	wg.Add(3)
+
 	go func() {
-		for range pollTicker.C {
-			a.collectRuntimeMetrics()
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pollTicker.C:
+				a.collectRuntimeMetrics()
+			}
 		}
 	}()
 
 	go func() {
-		for range pollTicker.C {
-			a.collectSystemMetrics()
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pollTicker.C:
+				a.collectSystemMetrics()
+			}
 		}
 	}()
 
 	go func() {
-		for range reportTicker.C {
-			snap := make(map[string]interface{})
-			a.metricsMu.Lock()
-			for k, v := range a.metrics {
-				snap[k] = v
-			}
-			pc := a.pollCount
-			a.pollCount = 0
-			a.metricsMu.Unlock()
-
-			if pc < 0 {
-				pc = 0
-			}
-			snap["PollCount"] = pc
-
-			if len(snap) == 0 {
-				continue
-			}
-
-			if a.config.RateLimit > 1 {
-				a.sendMetricsWithRetry(snap)
-			} else {
-				a.sendMetricsBatchWithRetry(snap)
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-reportTicker.C:
+				snap := a.buildSnapshot()
+				a.dispatchSnapshot(snap)
 			}
 		}
 	}()
 
-	select {}
+	<-ctx.Done()
+	wg.Wait()
+	snap := a.buildSnapshot()
+	a.dispatchSnapshot(snap)
+
+	return nil
+}
+
+func (a *Agent) buildSnapshot() map[string]interface{} {
+	snap := make(map[string]interface{})
+	a.metricsMu.Lock()
+	for k, v := range a.metrics {
+		snap[k] = v
+	}
+	pc := a.pollCount
+	a.pollCount = 0
+	a.metricsMu.Unlock()
+
+	if pc < 0 {
+		pc = 0
+	}
+	snap["PollCount"] = pc
+	return snap
+}
+
+func (a *Agent) dispatchSnapshot(snap map[string]interface{}) {
+	if len(snap) == 0 {
+		return
+	}
+	if a.config.RateLimit > 1 {
+		a.sendMetricsWithRetry(snap)
+	} else {
+		a.sendMetricsBatchWithRetry(snap)
+	}
 }
 
 func (a *Agent) collectRuntimeMetrics() {
