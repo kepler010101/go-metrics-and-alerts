@@ -3,14 +3,20 @@ package agent
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/hmac"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"log"
-	"math/rand"
+	mathrand "math/rand"
 	"net/http"
+	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -21,6 +27,8 @@ import (
 	models "go-metrics-and-alerts/internal/model"
 )
 
+const encryptedHeader = "X-Encrypted"
+
 // Agent collects runtime and system metrics and delivers them to the server.
 type Agent struct {
 	config      *Config
@@ -29,66 +37,114 @@ type Agent struct {
 	metricsMu   sync.Mutex
 	metrics     map[string]interface{}
 	pollCount   int64
+	publicKey   *rsa.PublicKey
 }
 
 // New builds an Agent with the provided configuration.
 func New(config *Config) *Agent {
-	return &Agent{
+	a := &Agent{
 		config:  config,
 		client:  &http.Client{},
 		metrics: make(map[string]interface{}),
 	}
+	if config != nil && config.CryptoKeyPath != "" {
+		key, err := loadPublicKey(config.CryptoKeyPath)
+		if err != nil {
+			log.Fatalf("load public key: %v", err)
+		}
+		a.publicKey = key
+	}
+	return a
 }
 
 // Run launches metric collection and reporting loops.
-func (a *Agent) Run() error {
+func (a *Agent) Run(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	pollTicker := time.NewTicker(a.config.PollInterval)
 	reportTicker := time.NewTicker(a.config.ReportInterval)
+	defer pollTicker.Stop()
+	defer reportTicker.Stop()
 
 	log.Printf("Agent starting, server: %s, poll: %v, report: %v",
 		a.config.ServerURL, a.config.PollInterval, a.config.ReportInterval)
 
+	var wg sync.WaitGroup
+	wg.Add(3)
+
 	go func() {
-		for range pollTicker.C {
-			a.collectRuntimeMetrics()
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pollTicker.C:
+				a.collectRuntimeMetrics()
+			}
 		}
 	}()
 
 	go func() {
-		for range pollTicker.C {
-			a.collectSystemMetrics()
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-pollTicker.C:
+				a.collectSystemMetrics()
+			}
 		}
 	}()
 
 	go func() {
-		for range reportTicker.C {
-			snap := make(map[string]interface{})
-			a.metricsMu.Lock()
-			for k, v := range a.metrics {
-				snap[k] = v
-			}
-			pc := a.pollCount
-			a.pollCount = 0
-			a.metricsMu.Unlock()
-
-			if pc < 0 {
-				pc = 0
-			}
-			snap["PollCount"] = pc
-
-			if len(snap) == 0 {
-				continue
-			}
-
-			if a.config.RateLimit > 1 {
-				a.sendMetricsWithRetry(snap)
-			} else {
-				a.sendMetricsBatchWithRetry(snap)
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-reportTicker.C:
+				snap := a.buildSnapshot()
+				a.dispatchSnapshot(snap)
 			}
 		}
 	}()
 
-	select {}
+	<-ctx.Done()
+	wg.Wait()
+	snap := a.buildSnapshot()
+	a.dispatchSnapshot(snap)
+
+	return nil
+}
+
+func (a *Agent) buildSnapshot() map[string]interface{} {
+	snap := make(map[string]interface{})
+	a.metricsMu.Lock()
+	for k, v := range a.metrics {
+		snap[k] = v
+	}
+	pc := a.pollCount
+	a.pollCount = 0
+	a.metricsMu.Unlock()
+
+	if pc < 0 {
+		pc = 0
+	}
+	snap["PollCount"] = pc
+	return snap
+}
+
+func (a *Agent) dispatchSnapshot(snap map[string]interface{}) {
+	if len(snap) == 0 {
+		return
+	}
+	if a.config.RateLimit > 1 {
+		a.sendMetricsWithRetry(snap)
+	} else {
+		a.sendMetricsBatchWithRetry(snap)
+	}
 }
 
 func (a *Agent) collectRuntimeMetrics() {
@@ -124,7 +180,7 @@ func (a *Agent) collectRuntimeMetrics() {
 	a.metrics["Sys"] = float64(m.Sys)
 	a.metrics["TotalAlloc"] = float64(m.TotalAlloc)
 
-	a.randomValue = rand.Float64()
+	a.randomValue = mathrand.Float64()
 	a.metrics["RandomValue"] = a.randomValue
 	a.pollCount++
 	a.metricsMu.Unlock()
@@ -222,8 +278,18 @@ func (a *Agent) sendMetricsBatch(metrics map[string]interface{}) error {
 		return fmt.Errorf("error closing gzip: %w", err)
 	}
 
+	payload := buf.Bytes()
+	encrypted := false
+	if a.publicKey != nil {
+		payload, err = encryptPayload(a.publicKey, payload)
+		if err != nil {
+			return fmt.Errorf("encrypt batch: %w", err)
+		}
+		encrypted = true
+	}
+
 	url := fmt.Sprintf("%s/updates/", a.config.ServerURL)
-	req, err := http.NewRequest("POST", url, &buf)
+	req, err := http.NewRequest("POST", url, bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("error creating request: %w", err)
 	}
@@ -232,6 +298,9 @@ func (a *Agent) sendMetricsBatch(metrics map[string]interface{}) error {
 	req.Header.Set("Accept-Encoding", "gzip")
 	if hashHeader != "" {
 		req.Header.Set("HashSHA256", hashHeader)
+	}
+	if encrypted {
+		req.Header.Set(encryptedHeader, "1")
 	}
 
 	resp, err := a.client.Do(req)
@@ -349,8 +418,18 @@ func (a *Agent) sendSingleMetric(name string, value interface{}) error {
 		return fmt.Errorf("gzip close error for %s: %w", name, err)
 	}
 
+	payload := buf.Bytes()
+	encrypted := false
+	if a.publicKey != nil {
+		payload, err = encryptPayload(a.publicKey, payload)
+		if err != nil {
+			return fmt.Errorf("encrypt metric %s: %w", name, err)
+		}
+		encrypted = true
+	}
+
 	url := fmt.Sprintf("%s/update", a.config.ServerURL)
-	req, err := http.NewRequest("POST", url, &buf)
+	req, err := http.NewRequest("POST", url, bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("creating request for %s: %w", name, err)
 	}
@@ -360,6 +439,9 @@ func (a *Agent) sendSingleMetric(name string, value interface{}) error {
 	if hashHeader != "" {
 		req.Header.Set("HashSHA256", hashHeader)
 	}
+	if encrypted {
+		req.Header.Set(encryptedHeader, "1")
+	}
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -368,4 +450,49 @@ func (a *Agent) sendSingleMetric(name string, value interface{}) error {
 	resp.Body.Close()
 
 	return nil
+}
+
+func loadPublicKey(path string) (*rsa.PublicKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, fmt.Errorf("invalid public key data")
+	}
+
+	pubAny, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+
+	pub, ok := pubAny.(*rsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("not an RSA public key")
+	}
+
+	return pub, nil
+}
+
+func encryptPayload(key *rsa.PublicKey, data []byte) ([]byte, error) {
+	chunkSize := key.Size() - 11
+	if chunkSize <= 0 {
+		return nil, fmt.Errorf("invalid key size")
+	}
+
+	var out bytes.Buffer
+	for offset := 0; offset < len(data); offset += chunkSize {
+		end := offset + chunkSize
+		if end > len(data) {
+			end = len(data)
+		}
+		encrypted, err := rsa.EncryptPKCS1v15(rand.Reader, key, data[offset:end])
+		if err != nil {
+			return nil, err
+		}
+		out.Write(encrypted)
+	}
+	return out.Bytes(), nil
 }
