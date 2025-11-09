@@ -1,9 +1,13 @@
 package main
 
 import (
+	"crypto/rsa"
+	"crypto/x509"
 	"database/sql"
 	"encoding/json"
+	"encoding/pem"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -126,6 +130,7 @@ func main() {
 	keyFlag := flag.String("k", "", "hash key")
 	auditFileFlag := flag.String("audit-file", "", "audit file path")
 	auditURLFlag := flag.String("audit-url", "", "audit url")
+	cryptoKeyFlag := flag.String("crypto-key", "", "path to private key")
 	flag.Parse()
 
 	log.Printf("Build version: %s", fallback(buildVersion))
@@ -179,6 +184,20 @@ func main() {
 	finalAuditURL := *auditURLFlag
 	if envAuditURL := os.Getenv("AUDIT_URL"); envAuditURL != "" {
 		finalAuditURL = envAuditURL
+	}
+
+	finalCryptoKey := *cryptoKeyFlag
+	if envCrypto := os.Getenv("CRYPTO_KEY"); envCrypto != "" {
+		finalCryptoKey = envCrypto
+	}
+
+	var privateKey *rsa.PrivateKey
+	if finalCryptoKey != "" {
+		var err error
+		privateKey, err = loadPrivateKey(finalCryptoKey)
+		if err != nil {
+			log.Fatalf("Failed to load private key: %v", err)
+		}
 	}
 
 	if finalDSN != "" {
@@ -259,6 +278,7 @@ func main() {
 	r := chi.NewRouter()
 
 	r.Use(middleware.WithLogging)
+	r.Use(middleware.WithDecrypt(privateKey))
 	r.Use(middleware.WithGzipDecompress)
 	r.Use(middleware.WithGzip)
 
@@ -294,4 +314,31 @@ func fallback(value string) string {
 		return "N/A"
 	}
 	return value
+}
+
+func loadPrivateKey(path string) (*rsa.PrivateKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, fmt.Errorf("invalid private key data")
+	}
+
+	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+
+	rsaKey, ok := parsed.(*rsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("not an RSA private key")
+	}
+	return rsaKey, nil
 }

@@ -16,6 +16,7 @@ type Config struct {
 	ReportInterval time.Duration
 	Key            string
 	RateLimit      int
+	CryptoKeyPath  string
 }
 
 // ParseConfig builds Config from flags and environment variables.
@@ -25,6 +26,7 @@ func ParseConfig() *Config {
 	pollInterval := flag.Int("p", 2, "poll interval in seconds")
 	keyFlag := flag.String("k", "", "hash key")
 	limitFlag := flag.Int("l", 1, "rate limit")
+	cryptoKeyFlag := flag.String("crypto-key", "", "path to public key")
 	flag.Parse()
 
 	finalAddr := *addr
@@ -63,11 +65,17 @@ func ParseConfig() *Config {
 		}
 	}
 
+	finalCryptoKey := *cryptoKeyFlag
+	if envCrypto := os.Getenv("CRYPTO_KEY"); envCrypto != "" {
+		finalCryptoKey = envCrypto
+	}
+
 	return &Config{
 		ServerURL:      "http://" + finalAddr,
 		PollInterval:   time.Duration(finalPollInterval) * time.Second,
 		ReportInterval: time.Duration(finalReportInterval) * time.Second,
 		Key:            finalKey,
 		RateLimit:      finalLimit,
+		CryptoKeyPath:  finalCryptoKey,
 	}
 }
