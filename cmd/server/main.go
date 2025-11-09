@@ -122,16 +122,55 @@ func loadFromFile() error {
 }
 
 func main() {
-	addr := flag.String("a", "localhost:8080", "server address")
-	storeIntervalFlag := flag.Int("i", 300, "store interval in seconds")
-	fileStoragePathFlag := flag.String("f", "/tmp/metrics-db.json", "file storage path")
-	restore := flag.Bool("r", true, "restore from file")
-	dsn := flag.String("d", "", "database DSN")
+	fileCfg := loadServerConfigFile()
+
+	addrDefault := "localhost:8080"
+	if fileCfg != nil && fileCfg.Address != "" {
+		addrDefault = fileCfg.Address
+	}
+
+	restoreDefault := true
+	if fileCfg != nil && fileCfg.Restore != nil {
+		restoreDefault = *fileCfg.Restore
+	}
+
+	storeIntervalDefault := 300
+	if fileCfg != nil && fileCfg.StoreInterval != "" {
+		if d, err := time.ParseDuration(fileCfg.StoreInterval); err == nil {
+			storeIntervalDefault = int(d / time.Second)
+		}
+	}
+
+	filePathDefault := "/tmp/metrics-db.json"
+	if fileCfg != nil && fileCfg.StoreFile != "" {
+		filePathDefault = fileCfg.StoreFile
+	}
+
+	dsnDefault := ""
+	if fileCfg != nil && fileCfg.DatabaseDSN != "" {
+		dsnDefault = fileCfg.DatabaseDSN
+	}
+
+	cryptoDefault := ""
+	if fileCfg != nil && fileCfg.CryptoKey != "" {
+		cryptoDefault = fileCfg.CryptoKey
+	}
+
+	addr := flag.String("a", addrDefault, "server address")
+	storeIntervalFlag := flag.Int("i", storeIntervalDefault, "store interval in seconds")
+	fileStoragePathFlag := flag.String("f", filePathDefault, "file storage path")
+	restore := flag.Bool("r", restoreDefault, "restore from file")
+	dsn := flag.String("d", dsnDefault, "database DSN")
 	keyFlag := flag.String("k", "", "hash key")
 	auditFileFlag := flag.String("audit-file", "", "audit file path")
 	auditURLFlag := flag.String("audit-url", "", "audit url")
-	cryptoKeyFlag := flag.String("crypto-key", "", "path to private key")
+	cryptoKeyFlag := flag.String("crypto-key", cryptoDefault, "path to private key")
+	configFlag := flag.String("config", "", "path to config file")
+	shortConfigFlag := flag.String("c", "", "path to config file (shorthand)")
 	flag.Parse()
+
+	_ = configFlag
+	_ = shortConfigFlag
 
 	log.Printf("Build version: %s", fallback(buildVersion))
 	log.Printf("Build date: %s", fallback(buildDate))
@@ -314,6 +353,57 @@ func fallback(value string) string {
 		return "N/A"
 	}
 	return value
+}
+
+type serverFileConfig struct {
+	Address       string `json:"address"`
+	Restore       *bool  `json:"restore"`
+	StoreInterval string `json:"store_interval"`
+	StoreFile     string `json:"store_file"`
+	DatabaseDSN   string `json:"database_dsn"`
+	CryptoKey     string `json:"crypto_key"`
+}
+
+func loadServerConfigFile() *serverFileConfig {
+	path := getServerConfigPathFromArgs()
+	if path == "" {
+		if env := os.Getenv("CONFIG"); env != "" {
+			path = env
+		}
+	}
+	if path == "" {
+		return nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	var cfg serverFileConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil
+	}
+	return &cfg
+}
+
+func getServerConfigPathFromArgs() string {
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-config=") {
+			return strings.TrimPrefix(arg, "-config=")
+		}
+		if strings.HasPrefix(arg, "-c=") {
+			return strings.TrimPrefix(arg, "-c=")
+		}
+		if arg == "-config" || arg == "-c" {
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+		}
+	}
+	return ""
 }
 
 func loadPrivateKey(path string) (*rsa.PrivateKey, error) {

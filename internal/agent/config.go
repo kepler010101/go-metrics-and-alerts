@@ -2,6 +2,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"flag"
 	"os"
 	"strconv"
@@ -21,13 +22,43 @@ type Config struct {
 
 // ParseConfig builds Config from flags and environment variables.
 func ParseConfig() *Config {
-	addr := flag.String("a", "localhost:8080", "server address")
-	reportInterval := flag.Int("r", 10, "report interval in seconds")
-	pollInterval := flag.Int("p", 2, "poll interval in seconds")
+	fileCfg := loadAgentConfigFile()
+
+	addrDefault := "localhost:8080"
+	if fileCfg != nil && fileCfg.Address != "" {
+		addrDefault = fileCfg.Address
+	}
+
+	reportDefault := 10
+	if fileCfg != nil && fileCfg.ReportInterval != "" {
+		if d, err := time.ParseDuration(fileCfg.ReportInterval); err == nil {
+			reportDefault = int(d / time.Second)
+		}
+	}
+
+	pollDefault := 2
+	if fileCfg != nil && fileCfg.PollInterval != "" {
+		if d, err := time.ParseDuration(fileCfg.PollInterval); err == nil {
+			pollDefault = int(d / time.Second)
+		}
+	}
+
+	cryptoDefault := ""
+	if fileCfg != nil && fileCfg.CryptoKey != "" {
+		cryptoDefault = fileCfg.CryptoKey
+	}
+
+	addr := flag.String("a", addrDefault, "server address")
+	reportInterval := flag.Int("r", reportDefault, "report interval in seconds")
+	pollInterval := flag.Int("p", pollDefault, "poll interval in seconds")
 	keyFlag := flag.String("k", "", "hash key")
 	limitFlag := flag.Int("l", 1, "rate limit")
-	cryptoKeyFlag := flag.String("crypto-key", "", "path to public key")
+	cryptoKeyFlag := flag.String("crypto-key", cryptoDefault, "path to public key")
+	configFlag := flag.String("config", "", "path to config file")
+	shortConfigFlag := flag.String("c", "", "path to config file (shorthand)")
 	flag.Parse()
+	_ = configFlag
+	_ = shortConfigFlag
 
 	finalAddr := *addr
 	if envAddr := os.Getenv("ADDRESS"); envAddr != "" {
@@ -78,4 +109,53 @@ func ParseConfig() *Config {
 		RateLimit:      finalLimit,
 		CryptoKeyPath:  finalCryptoKey,
 	}
+}
+
+type agentFileConfig struct {
+	Address        string `json:"address"`
+	ReportInterval string `json:"report_interval"`
+	PollInterval   string `json:"poll_interval"`
+	CryptoKey      string `json:"crypto_key"`
+}
+
+func loadAgentConfigFile() *agentFileConfig {
+	path := getConfigPathFromArgs()
+	if path == "" {
+		if env := os.Getenv("CONFIG"); env != "" {
+			path = env
+		}
+	}
+	if path == "" {
+		return nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	var cfg agentFileConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil
+	}
+	return &cfg
+}
+
+func getConfigPathFromArgs() string {
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-config=") {
+			return strings.TrimPrefix(arg, "-config=")
+		}
+		if strings.HasPrefix(arg, "-c=") {
+			return strings.TrimPrefix(arg, "-c=")
+		}
+		if arg == "-config" || arg == "-c" {
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+		}
+	}
+	return ""
 }
