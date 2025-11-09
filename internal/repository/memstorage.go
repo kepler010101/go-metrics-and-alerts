@@ -6,6 +6,7 @@ import (
 	models "go-metrics-and-alerts/internal/model"
 )
 
+// generate:reset
 // MemStorage keeps metrics in memory using simple maps.
 type MemStorage struct {
 	gauges   map[string]float64

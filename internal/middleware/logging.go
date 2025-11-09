@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -12,7 +13,10 @@ var sugar zap.SugaredLogger
 func init() {
 	logger, err := zap.NewDevelopment()
 	if err != nil {
-		panic(err)
+		sugarPtr := zap.NewNop().Sugar()
+		sugar = *sugarPtr
+		log.Printf("logger init error: %v", err)
+		return
 	}
 	defer logger.Sync()
 
