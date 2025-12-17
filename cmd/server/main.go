@@ -20,9 +20,11 @@ import (
 	"time"
 
 	"go-metrics-and-alerts/internal/audit"
+	"go-metrics-and-alerts/internal/grpcserver"
 	"go-metrics-and-alerts/internal/handler"
 	"go-metrics-and-alerts/internal/middleware"
 	models "go-metrics-and-alerts/internal/model"
+	pb "go-metrics-and-alerts/internal/proto"
 	"go-metrics-and-alerts/internal/repository"
 
 	"github.com/go-chi/chi/v5"
@@ -30,6 +32,7 @@ import (
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/lib/pq"
+	"google.golang.org/grpc"
 )
 
 var (
@@ -175,6 +178,7 @@ func main() {
 	auditURLFlag := flag.String("audit-url", "", "audit url")
 	cryptoKeyFlag := flag.String("crypto-key", cryptoDefault, "path to private key")
 	trustedSubnetFlag := flag.String("t", trustedSubnetDefault, "trusted subnet in CIDR")
+	grpcAddrFlag := flag.String("grpc-address", "", "grpc server address")
 	configFlag := flag.String("config", "", "path to config file")
 	shortConfigFlag := flag.String("c", "", "path to config file (shorthand)")
 	flag.Parse()
@@ -252,6 +256,11 @@ func main() {
 			log.Fatalf("Failed to parse trusted subnet: %v", err)
 		}
 		trustedSubnet = n
+	}
+
+	finalGRPCAddr := *grpcAddrFlag
+	if envGRPC := os.Getenv("GRPC_ADDRESS"); envGRPC != "" {
+		finalGRPCAddr = envGRPC
 	}
 
 	var privateKey *rsa.PrivateKey
@@ -370,32 +379,60 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
 	defer stop()
 
+	var grpcSrv *grpc.Server
+	var grpcLis net.Listener
+	if finalGRPCAddr != "" {
+		lis, err := net.Listen("tcp", finalGRPCAddr)
+		if err != nil {
+			log.Fatal("Failed to start gRPC listener:", err)
+		}
+		grpcLis = lis
+
+		grpcSrv = grpc.NewServer(grpc.UnaryInterceptor(grpcserver.TrustedSubnetInterceptor(trustedSubnet)))
+		pb.RegisterMetricsServer(grpcSrv, &grpcserver.Server{Storage: storage})
+
+		go func() {
+			if err := grpcSrv.Serve(grpcLis); err != nil {
+				log.Printf("gRPC server error: %v", err)
+			}
+		}()
+		log.Printf("Starting gRPC server on %s", finalGRPCAddr)
+	}
+
 	srv := &http.Server{
 		Addr:    finalAddr,
 		Handler: r,
 	}
 
+	done := make(chan struct{})
 	go func() {
-		log.Printf("Starting server on %s", finalAddr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server fail: %v", err)
+		<-ctx.Done()
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+
+		if grpcSrv != nil {
+			grpcSrv.GracefulStop()
 		}
+		if grpcLis != nil {
+			_ = grpcLis.Close()
+		}
+
+		if useFileStorage {
+			if err := saveToFile(); err != nil {
+				log.Printf("Failed to save during shutdown: %v", err)
+			}
+		}
+
+		close(done)
 	}()
 
-	<-ctx.Done()
-	log.Println("Shutdown signal received")
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("Server shutdown error: %v", err)
+	log.Printf("Starting server on %s", finalAddr)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatal("Server fail:", err)
 	}
-
-	if useFileStorage {
-		if err := saveToFile(); err != nil {
-			log.Printf("Failed to save during shutdown: %v", err)
-		}
-	}
+	<-done
 }
 
 func fallback(value string) string {

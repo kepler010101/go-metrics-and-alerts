@@ -18,6 +18,7 @@ type Config struct {
 	Key            string
 	RateLimit      int
 	CryptoKeyPath  string
+	GRPCAddress    string
 }
 
 // ParseConfig builds Config from flags and environment variables.
@@ -54,6 +55,7 @@ func ParseConfig() *Config {
 	keyFlag := flag.String("k", "", "hash key")
 	limitFlag := flag.Int("l", 1, "rate limit")
 	cryptoKeyFlag := flag.String("crypto-key", cryptoDefault, "path to public key")
+	grpcAddrFlag := flag.String("grpc-address", "", "grpc server address")
 	configFlag := flag.String("config", "", "path to config file")
 	shortConfigFlag := flag.String("c", "", "path to config file (shorthand)")
 	flag.Parse()
@@ -101,6 +103,11 @@ func ParseConfig() *Config {
 		finalCryptoKey = envCrypto
 	}
 
+	finalGRPCAddr := *grpcAddrFlag
+	if envGRPC := os.Getenv("GRPC_ADDRESS"); envGRPC != "" {
+		finalGRPCAddr = envGRPC
+	}
+
 	return &Config{
 		ServerURL:      "http://" + finalAddr,
 		PollInterval:   time.Duration(finalPollInterval) * time.Second,
@@ -108,6 +115,7 @@ func ParseConfig() *Config {
 		Key:            finalKey,
 		RateLimit:      finalLimit,
 		CryptoKeyPath:  finalCryptoKey,
+		GRPCAddress:    finalGRPCAddr,
 	}
 }
 
