@@ -191,13 +191,11 @@ func (a *Agent) initGRPC(ctx context.Context) error {
 		return nil
 	}
 
-	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	conn, err := grpc.DialContext(dialCtx, a.grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(a.grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return err
 	}
+	conn.Connect()
 
 	a.grpcConn = conn
 	a.grpcClient = pb.NewMetricsClient(conn)
