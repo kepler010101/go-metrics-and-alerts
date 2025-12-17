@@ -15,9 +15,12 @@ import (
 	"fmt"
 	"log"
 	mathrand "math/rand"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,7 +32,6 @@ import (
 
 const encryptedHeader = "X-Encrypted"
 
-// Agent collects runtime and system metrics and delivers them to the server.
 type Agent struct {
 	config      *Config
 	randomValue float64
@@ -38,9 +40,9 @@ type Agent struct {
 	metrics     map[string]interface{}
 	pollCount   int64
 	publicKey   *rsa.PublicKey
+	realIP      string
 }
 
-// New builds an Agent with the provided configuration.
 func New(config *Config) *Agent {
 	a := &Agent{
 		config:  config,
@@ -54,10 +56,12 @@ func New(config *Config) *Agent {
 		}
 		a.publicKey = key
 	}
+	if config != nil {
+		a.realIP = detectLocalIP(config.ServerURL)
+	}
 	return a
 }
 
-// Run launches metric collection and reporting loops.
 func (a *Agent) Run(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -296,6 +300,9 @@ func (a *Agent) sendMetricsBatch(metrics map[string]interface{}) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
 	req.Header.Set("Accept-Encoding", "gzip")
+	if a.realIP != "" {
+		req.Header.Set("X-Real-IP", a.realIP)
+	}
 	if hashHeader != "" {
 		req.Header.Set("HashSHA256", hashHeader)
 	}
@@ -436,6 +443,9 @@ func (a *Agent) sendSingleMetric(name string, value interface{}) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
 	req.Header.Set("Accept-Encoding", "gzip")
+	if a.realIP != "" {
+		req.Header.Set("X-Real-IP", a.realIP)
+	}
 	if hashHeader != "" {
 		req.Header.Set("HashSHA256", hashHeader)
 	}
@@ -495,4 +505,35 @@ func encryptPayload(key *rsa.PublicKey, data []byte) ([]byte, error) {
 		out.Write(encrypted)
 	}
 	return out.Bytes(), nil
+}
+
+func detectLocalIP(serverURL string) string {
+	u, err := url.Parse(serverURL)
+	if err != nil {
+		return ""
+	}
+
+	host := u.Host
+	if host == "" {
+		host = u.Path
+	}
+	if host == "" {
+		return ""
+	}
+
+	if !strings.Contains(host, ":") {
+		host += ":80"
+	}
+
+	conn, err := net.Dial("udp", host)
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+
+	udp, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok || udp.IP == nil {
+		return ""
+	}
+	return udp.IP.String()
 }
