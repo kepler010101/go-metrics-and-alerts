@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -159,6 +160,11 @@ func main() {
 		cryptoDefault = fileCfg.CryptoKey
 	}
 
+	trustedSubnetDefault := ""
+	if fileCfg != nil && fileCfg.TrustedSubnet != "" {
+		trustedSubnetDefault = fileCfg.TrustedSubnet
+	}
+
 	addr := flag.String("a", addrDefault, "server address")
 	storeIntervalFlag := flag.Int("i", storeIntervalDefault, "store interval in seconds")
 	fileStoragePathFlag := flag.String("f", filePathDefault, "file storage path")
@@ -168,6 +174,7 @@ func main() {
 	auditFileFlag := flag.String("audit-file", "", "audit file path")
 	auditURLFlag := flag.String("audit-url", "", "audit url")
 	cryptoKeyFlag := flag.String("crypto-key", cryptoDefault, "path to private key")
+	trustedSubnetFlag := flag.String("t", trustedSubnetDefault, "trusted subnet in CIDR")
 	configFlag := flag.String("config", "", "path to config file")
 	shortConfigFlag := flag.String("c", "", "path to config file (shorthand)")
 	flag.Parse()
@@ -231,6 +238,20 @@ func main() {
 	finalCryptoKey := *cryptoKeyFlag
 	if envCrypto := os.Getenv("CRYPTO_KEY"); envCrypto != "" {
 		finalCryptoKey = envCrypto
+	}
+
+	finalTrustedSubnet := *trustedSubnetFlag
+	if envSubnet := os.Getenv("TRUSTED_SUBNET"); envSubnet != "" {
+		finalTrustedSubnet = envSubnet
+	}
+
+	var trustedSubnet *net.IPNet
+	if finalTrustedSubnet != "" {
+		_, n, err := net.ParseCIDR(finalTrustedSubnet)
+		if err != nil {
+			log.Fatalf("Failed to parse trusted subnet: %v", err)
+		}
+		trustedSubnet = n
 	}
 
 	var privateKey *rsa.PrivateKey
@@ -320,6 +341,7 @@ func main() {
 	r := chi.NewRouter()
 
 	r.Use(middleware.WithLogging)
+	r.Use(middleware.WithTrustedSubnet(trustedSubnet))
 	r.Use(middleware.WithDecrypt(privateKey))
 	r.Use(middleware.WithGzipDecompress)
 	r.Use(middleware.WithGzip)
@@ -390,6 +412,7 @@ type serverFileConfig struct {
 	StoreFile     string `json:"store_file"`
 	DatabaseDSN   string `json:"database_dsn"`
 	CryptoKey     string `json:"crypto_key"`
+	TrustedSubnet string `json:"trusted_subnet"`
 }
 
 func loadServerConfigFile() *serverFileConfig {
