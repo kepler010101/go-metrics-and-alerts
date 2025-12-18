@@ -285,44 +285,6 @@ func file_metrics_proto_init() {
 	if File_metrics_proto != nil {
 		return
 	}
-	if !protoimpl.UnsafeEnabled {
-		file_metrics_proto_msgTypes[0].Exporter = func(v any, i int) any {
-			switch v := v.(*Metric); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_metrics_proto_msgTypes[1].Exporter = func(v any, i int) any {
-			switch v := v.(*UpdateMetricsRequest); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_metrics_proto_msgTypes[2].Exporter = func(v any, i int) any {
-			switch v := v.(*UpdateMetricsResponse); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
