@@ -350,7 +350,6 @@ func main() {
 	r := chi.NewRouter()
 
 	r.Use(middleware.WithLogging)
-	r.Use(middleware.WithTrustedSubnet(trustedSubnet))
 	r.Use(middleware.WithDecrypt(privateKey))
 	r.Use(middleware.WithGzipDecompress)
 	r.Use(middleware.WithGzip)
@@ -367,14 +366,19 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	r.Post("/update/{type}/{name}/{value}", h.UpdateMetric)
-	r.Post("/update", h.UpdateMetricJSON)
-	r.Post("/update/", h.UpdateMetricJSON)
+	r.Group(func(r chi.Router) {
+		if trustedSubnet != nil {
+			r.Use(middleware.WithTrustedSubnet(trustedSubnet))
+		}
+		r.Post("/update/{type}/{name}/{value}", h.UpdateMetric)
+		r.Post("/update", h.UpdateMetricJSON)
+		r.Post("/update/", h.UpdateMetricJSON)
+		r.Post("/updates/", h.UpdateMetricsBatch)
+	})
 	r.Get("/value/{type}/{name}", h.GetMetric)
 	r.Post("/value", h.GetMetricJSON)
 	r.Post("/value/", h.GetMetricJSON)
 	r.Get("/", h.ListMetrics)
-	r.Post("/updates/", h.UpdateMetricsBatch)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
 	defer stop()
@@ -388,8 +392,9 @@ func main() {
 		}
 		grpcLis = lis
 
+		saveHook := handler.SyncSaveFunc
 		grpcSrv = grpc.NewServer(grpc.UnaryInterceptor(grpcserver.TrustedSubnetInterceptor(trustedSubnet)))
-		pb.RegisterMetricsServer(grpcSrv, &grpcserver.Server{Storage: storage})
+		pb.RegisterMetricsServer(grpcSrv, &grpcserver.Server{Storage: storage, SaveHook: saveHook})
 
 		go func() {
 			if err := grpcSrv.Serve(grpcLis); err != nil {
@@ -410,7 +415,9 @@ func main() {
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("Server shutdown error: %v", err)
+		}
 
 		if grpcSrv != nil {
 			grpcSrv.GracefulStop()

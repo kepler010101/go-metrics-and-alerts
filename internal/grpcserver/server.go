@@ -3,7 +3,6 @@ package grpcserver
 import (
 	"context"
 
-	"go-metrics-and-alerts/internal/handler"
 	models "go-metrics-and-alerts/internal/model"
 	pb "go-metrics-and-alerts/internal/proto"
 	"go-metrics-and-alerts/internal/repository"
@@ -14,11 +13,14 @@ import (
 
 type Server struct {
 	pb.UnimplementedMetricsServer
-	Storage repository.Repository
+	Storage  repository.Repository
+	SaveHook func()
 }
 
 func (s *Server) UpdateMetrics(ctx context.Context, req *pb.UpdateMetricsRequest) (*pb.UpdateMetricsResponse, error) {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return nil, status.Error(codes.Canceled, "context canceled")
+	}
 	if s == nil || s.Storage == nil {
 		return nil, status.Error(codes.Internal, "storage not configured")
 	}
@@ -63,8 +65,8 @@ func (s *Server) UpdateMetrics(ctx context.Context, req *pb.UpdateMetricsRequest
 		return nil, status.Error(codes.Internal, "storage error")
 	}
 
-	if handler.SyncSaveFunc != nil {
-		handler.SyncSaveFunc()
+	if s.SaveHook != nil {
+		s.SaveHook()
 	}
 
 	return &pb.UpdateMetricsResponse{}, nil
