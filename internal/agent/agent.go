@@ -15,9 +15,12 @@ import (
 	"fmt"
 	"log"
 	mathrand "math/rand"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,22 +28,30 @@ import (
 	"github.com/shirou/gopsutil/v3/mem"
 
 	models "go-metrics-and-alerts/internal/model"
+	pb "go-metrics-and-alerts/internal/proto"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 )
 
 const encryptedHeader = "X-Encrypted"
 
-// Agent collects runtime and system metrics and delivers them to the server.
 type Agent struct {
-	config      *Config
-	randomValue float64
-	client      *http.Client
-	metricsMu   sync.Mutex
-	metrics     map[string]interface{}
-	pollCount   int64
-	publicKey   *rsa.PublicKey
+	config       *Config
+	randomValue  float64
+	client       *http.Client
+	metricsMu    sync.Mutex
+	metrics      map[string]interface{}
+	pollCount    int64
+	publicKey    *rsa.PublicKey
+	publicKeyErr error
+	realIP       string
+	grpcAddr     string
+	grpcConn     *grpc.ClientConn
+	grpcClient   pb.MetricsClient
 }
 
-// New builds an Agent with the provided configuration.
 func New(config *Config) *Agent {
 	a := &Agent{
 		config:  config,
@@ -50,17 +61,38 @@ func New(config *Config) *Agent {
 	if config != nil && config.CryptoKeyPath != "" {
 		key, err := loadPublicKey(config.CryptoKeyPath)
 		if err != nil {
-			log.Fatalf("load public key: %v", err)
+			a.publicKeyErr = err
+		} else {
+			a.publicKey = key
 		}
-		a.publicKey = key
+	}
+	if config != nil {
+		a.grpcAddr = config.GRPCAddress
+		if a.grpcAddr != "" {
+			a.realIP = detectLocalIP(a.grpcAddr)
+		} else {
+			a.realIP = detectLocalIP(config.ServerURL)
+		}
 	}
 	return a
 }
 
-// Run launches metric collection and reporting loops.
 func (a *Agent) Run(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if a.publicKeyErr != nil {
+		return a.publicKeyErr
+	}
+	if a.grpcAddr != "" {
+		if err := a.initGRPC(ctx); err != nil {
+			return err
+		}
+		defer func() {
+			if a.grpcConn != nil {
+				_ = a.grpcConn.Close()
+			}
+		}()
 	}
 
 	pollTicker := time.NewTicker(a.config.PollInterval)
@@ -140,11 +172,80 @@ func (a *Agent) dispatchSnapshot(snap map[string]interface{}) {
 	if len(snap) == 0 {
 		return
 	}
+	if a.grpcClient != nil {
+		a.sendMetricsGRPCWithRetry(snap)
+		return
+	}
 	if a.config.RateLimit > 1 {
 		a.sendMetricsWithRetry(snap)
 	} else {
 		a.sendMetricsBatchWithRetry(snap)
 	}
+}
+
+func (a *Agent) initGRPC(ctx context.Context) error {
+	if a.grpcAddr == "" {
+		return nil
+	}
+	if a.grpcClient != nil {
+		return nil
+	}
+
+	conn, err := grpc.NewClient(a.grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return err
+	}
+	conn.Connect()
+
+	a.grpcConn = conn
+	a.grpcClient = pb.NewMetricsClient(conn)
+	return nil
+}
+
+func (a *Agent) sendMetricsGRPCWithRetry(metrics map[string]interface{}) {
+	retryIntervals := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+
+	for attempt := 0; attempt <= len(retryIntervals); attempt++ {
+		if attempt > 0 {
+			time.Sleep(retryIntervals[attempt-1])
+		}
+
+		if err := a.sendMetricsGRPC(metrics); err == nil {
+			return
+		}
+	}
+}
+
+func (a *Agent) sendMetricsGRPC(metrics map[string]interface{}) error {
+	if a.grpcClient == nil {
+		return fmt.Errorf("grpc client not initialized")
+	}
+
+	list := make([]*pb.Metric, 0, len(metrics))
+	for name, value := range metrics {
+		m := &pb.Metric{Id: name}
+		switch v := value.(type) {
+		case float64:
+			m.Type = pb.Metric_GAUGE
+			m.Value = v
+		case int64:
+			m.Type = pb.Metric_COUNTER
+			m.Delta = v
+		default:
+			continue
+		}
+		list = append(list, m)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if a.realIP != "" {
+		ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("x-real-ip", a.realIP))
+	}
+
+	_, err := a.grpcClient.UpdateMetrics(ctx, &pb.UpdateMetricsRequest{Metrics: list})
+	return err
 }
 
 func (a *Agent) collectRuntimeMetrics() {
@@ -296,6 +397,9 @@ func (a *Agent) sendMetricsBatch(metrics map[string]interface{}) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
 	req.Header.Set("Accept-Encoding", "gzip")
+	if a.realIP != "" {
+		req.Header.Set("X-Real-IP", a.realIP)
+	}
 	if hashHeader != "" {
 		req.Header.Set("HashSHA256", hashHeader)
 	}
@@ -436,6 +540,9 @@ func (a *Agent) sendSingleMetric(name string, value interface{}) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "gzip")
 	req.Header.Set("Accept-Encoding", "gzip")
+	if a.realIP != "" {
+		req.Header.Set("X-Real-IP", a.realIP)
+	}
 	if hashHeader != "" {
 		req.Header.Set("HashSHA256", hashHeader)
 	}
@@ -495,4 +602,35 @@ func encryptPayload(key *rsa.PublicKey, data []byte) ([]byte, error) {
 		out.Write(encrypted)
 	}
 	return out.Bytes(), nil
+}
+
+func detectLocalIP(serverURL string) string {
+	u, err := url.Parse(serverURL)
+	if err != nil {
+		return ""
+	}
+
+	host := u.Host
+	if host == "" {
+		host = u.Path
+	}
+	if host == "" {
+		return ""
+	}
+
+	if !strings.Contains(host, ":") {
+		host += ":80"
+	}
+
+	conn, err := net.Dial("udp", host)
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+
+	udp, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok || udp.IP == nil {
+		return ""
+	}
+	return udp.IP.String()
 }

@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,9 +20,11 @@ import (
 	"time"
 
 	"go-metrics-and-alerts/internal/audit"
+	"go-metrics-and-alerts/internal/grpcserver"
 	"go-metrics-and-alerts/internal/handler"
 	"go-metrics-and-alerts/internal/middleware"
 	models "go-metrics-and-alerts/internal/model"
+	pb "go-metrics-and-alerts/internal/proto"
 	"go-metrics-and-alerts/internal/repository"
 
 	"github.com/go-chi/chi/v5"
@@ -29,6 +32,7 @@ import (
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/lib/pq"
+	"google.golang.org/grpc"
 )
 
 var (
@@ -159,6 +163,11 @@ func main() {
 		cryptoDefault = fileCfg.CryptoKey
 	}
 
+	trustedSubnetDefault := ""
+	if fileCfg != nil && fileCfg.TrustedSubnet != "" {
+		trustedSubnetDefault = fileCfg.TrustedSubnet
+	}
+
 	addr := flag.String("a", addrDefault, "server address")
 	storeIntervalFlag := flag.Int("i", storeIntervalDefault, "store interval in seconds")
 	fileStoragePathFlag := flag.String("f", filePathDefault, "file storage path")
@@ -168,6 +177,8 @@ func main() {
 	auditFileFlag := flag.String("audit-file", "", "audit file path")
 	auditURLFlag := flag.String("audit-url", "", "audit url")
 	cryptoKeyFlag := flag.String("crypto-key", cryptoDefault, "path to private key")
+	trustedSubnetFlag := flag.String("t", trustedSubnetDefault, "trusted subnet in CIDR")
+	grpcAddrFlag := flag.String("grpc-address", "", "grpc server address")
 	configFlag := flag.String("config", "", "path to config file")
 	shortConfigFlag := flag.String("c", "", "path to config file (shorthand)")
 	flag.Parse()
@@ -231,6 +242,25 @@ func main() {
 	finalCryptoKey := *cryptoKeyFlag
 	if envCrypto := os.Getenv("CRYPTO_KEY"); envCrypto != "" {
 		finalCryptoKey = envCrypto
+	}
+
+	finalTrustedSubnet := *trustedSubnetFlag
+	if envSubnet := os.Getenv("TRUSTED_SUBNET"); envSubnet != "" {
+		finalTrustedSubnet = envSubnet
+	}
+
+	var trustedSubnet *net.IPNet
+	if finalTrustedSubnet != "" {
+		_, n, err := net.ParseCIDR(finalTrustedSubnet)
+		if err != nil {
+			log.Fatalf("Failed to parse trusted subnet: %v", err)
+		}
+		trustedSubnet = n
+	}
+
+	finalGRPCAddr := *grpcAddrFlag
+	if envGRPC := os.Getenv("GRPC_ADDRESS"); envGRPC != "" {
+		finalGRPCAddr = envGRPC
 	}
 
 	var privateKey *rsa.PrivateKey
@@ -336,44 +366,80 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	r.Post("/update/{type}/{name}/{value}", h.UpdateMetric)
-	r.Post("/update", h.UpdateMetricJSON)
-	r.Post("/update/", h.UpdateMetricJSON)
+	r.Group(func(r chi.Router) {
+		if trustedSubnet != nil {
+			r.Use(middleware.WithTrustedSubnet(trustedSubnet))
+		}
+		r.Post("/update/{type}/{name}/{value}", h.UpdateMetric)
+		r.Post("/update", h.UpdateMetricJSON)
+		r.Post("/update/", h.UpdateMetricJSON)
+		r.Post("/updates/", h.UpdateMetricsBatch)
+	})
 	r.Get("/value/{type}/{name}", h.GetMetric)
 	r.Post("/value", h.GetMetricJSON)
 	r.Post("/value/", h.GetMetricJSON)
 	r.Get("/", h.ListMetrics)
-	r.Post("/updates/", h.UpdateMetricsBatch)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
 	defer stop()
+
+	var grpcSrv *grpc.Server
+	var grpcLis net.Listener
+	if finalGRPCAddr != "" {
+		lis, err := net.Listen("tcp", finalGRPCAddr)
+		if err != nil {
+			log.Fatal("Failed to start gRPC listener:", err)
+		}
+		grpcLis = lis
+
+		saveHook := handler.SyncSaveFunc
+		grpcSrv = grpc.NewServer(grpc.UnaryInterceptor(grpcserver.TrustedSubnetInterceptor(trustedSubnet)))
+		pb.RegisterMetricsServer(grpcSrv, &grpcserver.Server{Storage: storage, SaveHook: saveHook})
+
+		go func() {
+			if err := grpcSrv.Serve(grpcLis); err != nil {
+				log.Printf("gRPC server error: %v", err)
+			}
+		}()
+		log.Printf("Starting gRPC server on %s", finalGRPCAddr)
+	}
 
 	srv := &http.Server{
 		Addr:    finalAddr,
 		Handler: r,
 	}
 
+	done := make(chan struct{})
 	go func() {
-		log.Printf("Starting server on %s", finalAddr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server fail: %v", err)
+		<-ctx.Done()
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("Server shutdown error: %v", err)
 		}
+
+		if grpcSrv != nil {
+			grpcSrv.GracefulStop()
+		}
+		if grpcLis != nil {
+			_ = grpcLis.Close()
+		}
+
+		if useFileStorage {
+			if err := saveToFile(); err != nil {
+				log.Printf("Failed to save during shutdown: %v", err)
+			}
+		}
+
+		close(done)
 	}()
 
-	<-ctx.Done()
-	log.Println("Shutdown signal received")
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("Server shutdown error: %v", err)
+	log.Printf("Starting server on %s", finalAddr)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatal("Server fail:", err)
 	}
-
-	if useFileStorage {
-		if err := saveToFile(); err != nil {
-			log.Printf("Failed to save during shutdown: %v", err)
-		}
-	}
+	<-done
 }
 
 func fallback(value string) string {
@@ -390,6 +456,7 @@ type serverFileConfig struct {
 	StoreFile     string `json:"store_file"`
 	DatabaseDSN   string `json:"database_dsn"`
 	CryptoKey     string `json:"crypto_key"`
+	TrustedSubnet string `json:"trusted_subnet"`
 }
 
 func loadServerConfigFile() *serverFileConfig {

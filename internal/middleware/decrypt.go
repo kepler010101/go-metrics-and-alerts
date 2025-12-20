@@ -11,7 +11,6 @@ import (
 
 const encryptedHeader = "X-Encrypted"
 
-// WithDecrypt decrypts request bodies marked with X-Encrypted header.
 func WithDecrypt(key *rsa.PrivateKey) func(http.Handler) http.Handler {
 	if key == nil {
 		return func(next http.Handler) http.Handler {
